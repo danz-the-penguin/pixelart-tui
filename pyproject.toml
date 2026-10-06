@@ -1,7 +1,7 @@
 [project]
-name = "imagetopixelart"
-version = "0.1.0"
-description = "CLI tool to transform images into authentic retro pixel art for game development."
+name = "pixelart-tui"
+version = "0.2.0"
+description = "Terminal Studio (TUI) and CLI tool to convert images into authentic retro pixel art for game development."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
