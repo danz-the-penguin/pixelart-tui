@@ -29,23 +29,43 @@ uv run python main.py --tui
 
 ## 🌟 Core Engine Features
 
-- **Hardware-Accurate Palettes**:
-  - **Nintendo Game Boy** (DMG-01 4-shade green & Game Boy Pocket monochrome)
-  - **Nintendo NES** (Canonical 54-color 2C02 palette)
-  - **PICO-8** (16 fantasy console colors)
-  - **Commodore 64** (16 Pepto colors)
-  - **IBM PC CGA** (Mode 0 & Mode 1)
-  - **ZX Spectrum** (15 colors)
-  - **Adaptive Palette**: Automatically extracts optimal N-color palettes (ideal for SNES / GBA 16-color sprites)
+- **Hardware-Accurate Palettes (26+ Systems)**:
+  - **Nintendo SNES** (Curated 16 colors & 15-bit hardware grid snap `snes-adaptive`)
+  - **Sega Genesis / Mega Drive** (16 colors & 9-bit hardware grid snap `genesis-adaptive`)
+  - **Nintendo Game Boy Advance** (GBA curated 16-color palette)
+  - **Nintendo NES** (Canonical 54-color 2C02 hardware palette)
+  - **Nintendo Game Boy** (DMG-01 4-shade green, Game Boy Pocket monochrome, GBC 16-color)
+  - **Commodore 64 & Amiga OCS** (C64 16 Pepto colors, Amiga 16 Copper colors)
+  - **NEC PC-9801** (16 Japanese retro computer colors)
+  - **Apple II** (16 Wozniak composite NTSC colors)
+  - **Amstrad CPC** (16 hardware colors)
+  - **Sega Master System & Game Gear** (16 colors each)
+  - **Atari 2600 VCS** (16 NTSC arcade colors)
+  - **PICO-8 & TIC-80** (PICO-8 16 standard, PICO-8 32 extended secret colors, TIC-80 Sweetie 16)
+  - **IBM PC CGA** (Mode 0 & Mode 1 high-intensity)
+  - **ZX Spectrum** (15 standard Sinclair colors)
+  - **CRT Terminals & 1-bit** (IBM 5151 green phosphor, amber CRT terminal, 1-bit B&W)
+  - **Endesga 32 & Cyberpunk** (Modern indie pixel art palettes)
+  - **Adaptive Palette**: Automatically extracts optimal N-color palettes (--colors N)
   - **Custom Palettes**: Supports comma-separated hex colors (e.g. `--palette '#000,#ff0055,#ffffff'`) or `.gpl`/text palette files.
-- **Authentic Dithering Modes**:
-  - `none`: Crisp, clean cel-shaded retro look (great for modern indie pixel art like *Celeste* or *Shovel Knight*).
-  - `bayer-2x2`, `bayer-4x4`, `bayer-8x8`: Ordered cross-hatch dithering characteristic of DOS, PC-98, and arcade games.
-  - `floyd`: Error diffusion dithering for smooth color transitions.
+- **Authentic Dithering Modes (11 Algorithms)**:
+  - `none`: Crisp, clean cel-shaded retro look.
+  - `bayer-2x2`, `bayer-4x4`, `bayer-8x8`: Classic ordered crosshatch dithering.
+  - `checkerboard`: 1x1 alternating parity mesh shading (Sega Genesis pseudo-transparency).
+  - `blue-noise`: Organic, high-frequency void-and-cluster grain dithering (*Return of the Obra Dinn*).
+  - `floyd`: Canonical Floyd-Steinberg error diffusion.
+  - `atkinson`: Bill Atkinson Apple Macintosh 1984 dithering (drops 25% error for punchy high contrast).
+  - `burkes`: Fast 7-neighbor 2-row error diffusion avoiding worm artifacts.
+  - `sierra`: Frankie Sierra smooth two-row error diffusion.
+  - `stucki`: High-fidelity 12-neighbor 3-row error diffusion.
+- **Rich Color Enhancements & Presets**:
+  - **Contrast, Saturation & Sharpness**: Boost clarity and prevent washed-out colors.
+  - **Brightness & Gamma Correction**: Simulate vintage CRT monitor gamma curves.
+  - **Color Warmth**: Shift color temperature from cool cyber blue to warm incandescent amber.
+  - **Retro CRT Tints**: Green phosphor (`crt-green`), amber terminal (`crt-amber`), vintage sepia (`sepia`), and monochrome (`monochrome`).
 - **Game Engine & Asset Pipeline Friendly**:
   - **Alpha Transparency Support**: Accurately preserves transparent PNG backgrounds without ugly fringe or color bleeding.
   - **Sprite Outlining**: Adds a 1-pixel dark outline around sprite silhouettes to make characters pop against backgrounds.
-  - **Pre-processing Boost**: Automatic contrast, saturation, and edge sharpness enhancement to prevent downsampled art from looking washed out.
   - **Dual Output**: Save both native 1x low-res sprite (`--save-raw`) and upscaled nearest-neighbor preview (`--scale 8`).
   - **Direct Game Dev Exports**:
     - `--export-c`: Generates a C/C++ header (`.h`) with palette and index arrays (ready for GBDK, devkitARM, NES cc65, Arduboy, Raylib, SDL).
@@ -99,7 +119,7 @@ uv run python main.py --list-palettes
 | Downscale Divisor | `-d, --downscale` | Divides width/height by integer factor (e.g. 4, 8) | None |
 | Palette | `-p, --palette` | `pico8`, `gameboy`, `nes`, `c64`, `cga-mode1`, `adaptive`, etc. | `pico8` |
 | Adaptive Colors | `-c, --colors` | Number of colors when using `--palette adaptive` | `16` |
-| Dither Algorithm | `--dither` | `none`, `bayer-2x2`, `bayer-4x4`, `bayer-8x8`, `floyd` | `none` |
+| Dither Algorithm | `--dither` | `none`, `bayer-2x2`, `bayer-4x4`, `bayer-8x8`, `checkerboard`, `blue-noise`, `floyd`, `atkinson`, `burkes`, `sierra`, `stucki` | `none` |
 | Dither Strength | `--dither-strength`| Multiplier for dithering spread | `1.0` |
 | Upscale Factor | `--scale` | Nearest-neighbor multiplier for modern display | `8` |
 | Save Raw Sprite | `--save-raw` | Also output the 1x native retro sprite (e.g. `32x32.png`) | `False` |
@@ -108,6 +128,10 @@ uv run python main.py --list-palettes
 | Contrast Boost | `--contrast` | Multiplier for contrast enhancement before resize | `1.25` |
 | Saturation Boost | `--saturation` | Multiplier for color saturation before resize | `1.25` |
 | Sharpness Boost | `--sharpness` | Multiplier for edge sharpness before resize | `1.30` |
+| Brightness Boost | `--brightness` | Multiplier for brightness adjustment | `1.0` |
+| Gamma Correction | `--gamma` | Gamma exponent (`<1.0` lifts shadows, `>1.0` darkens) | `1.0` |
+| Color Warmth | `--warmth` | Color temperature balance (`-1.0` cool cyber to `+1.0` warm amber) | `0.0` |
+| Retro CRT Tint | `--tint` | Retro monitor tint: `none`, `crt-green`, `crt-amber`, `sepia`, `monochrome` | `none` |
 | Export C Header | `--export-c` | Outputs `.h` header with palette and index arrays | `False` |
 | Export PICO-8 | `--export-pico8` | Outputs hex text ready for PICO-8 cartridge | `False` |
 | Export Palette | `--export-palette` | Outputs palette as JSON file | `False` |

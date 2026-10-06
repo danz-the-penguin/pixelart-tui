@@ -1,11 +1,25 @@
 """Dithering algorithms and color quantization for retro pixel art."""
 
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 import numpy as np
 from PIL import Image
 
 RGBColor = Tuple[int, int, int]
 Palette = List[RGBColor]
+
+DITHER_METHODS = (
+    "none",
+    "bayer-2x2",
+    "bayer-4x4",
+    "bayer-8x8",
+    "checkerboard",
+    "blue-noise",
+    "floyd",
+    "atkinson",
+    "burkes",
+    "sierra",
+    "stucki",
+)
 
 # Bayer Matrices normalized to zero-centered range [-0.5, 0.5]
 BAYER_2X2 = (np.array([
@@ -30,6 +44,72 @@ BAYER_8X8 = (np.array([
     [15, 47,  7, 39, 13, 45,  5, 37],
     [63, 31, 55, 23, 61, 29, 53, 21]
 ], dtype=np.float32) / 64.0) - 0.5
+
+# 1x1 Alternating parity checkerboard matrix (Sega Genesis pseudo-transparency & mesh shading)
+CHECKERBOARD_2X2 = np.array([
+    [ 0.5, -0.5],
+    [-0.5,  0.5],
+], dtype=np.float32)
+
+# Deterministic Void-and-Cluster 16x16 Blue Noise threshold matrix (normalized to [-0.5, 0.5])
+# High-frequency grain dithering without directional worming or regular grid artifacts
+_BN_RNG = np.random.RandomState(42)
+BLUE_NOISE_16X16 = (_BN_RNG.permutation(256).reshape((16, 16)).astype(np.float32) / 256.0) - 0.5
+
+# Classic retro error-diffusion kernels: list of (dx, dy, weight)
+DIFFUSION_KERNELS = {
+    # Floyd-Steinberg (1976): canonical 4-neighbor error diffusion
+    "floyd": [
+        (1, 0, 7.0 / 16.0),
+        (-1, 1, 3.0 / 16.0),
+        (0, 1, 5.0 / 16.0),
+        (1, 1, 1.0 / 16.0),
+    ],
+    # Atkinson (Bill Atkinson, Apple Macintosh 1984): drops 25% error for crisp, punchy contrast
+    "atkinson": [
+        (1, 0, 1.0 / 8.0),
+        (2, 0, 1.0 / 8.0),
+        (-1, 1, 1.0 / 8.0),
+        (0, 1, 1.0 / 8.0),
+        (1, 1, 1.0 / 8.0),
+        (0, 2, 1.0 / 8.0),
+    ],
+    # Burkes (1988): fast 7-neighbor 2-row diffusion avoiding worm-like artifacts
+    "burkes": [
+        (1, 0, 8.0 / 32.0),
+        (2, 0, 4.0 / 32.0),
+        (-2, 1, 2.0 / 32.0),
+        (-1, 1, 4.0 / 32.0),
+        (0, 1, 8.0 / 32.0),
+        (1, 1, 4.0 / 32.0),
+        (2, 1, 2.0 / 32.0),
+    ],
+    # Sierra Two-Row (Frankie Sierra, 1989): smooth 7-neighbor diffusion popular in retro PC games
+    "sierra": [
+        (1, 0, 4.0 / 16.0),
+        (2, 0, 3.0 / 16.0),
+        (-2, 1, 1.0 / 16.0),
+        (-1, 1, 2.0 / 16.0),
+        (0, 1, 3.0 / 16.0),
+        (1, 1, 2.0 / 16.0),
+        (2, 1, 1.0 / 16.0),
+    ],
+    # Stucki (Peter Stucki, 1981): 12-neighbor 3-row high-detail diffusion
+    "stucki": [
+        (1, 0, 8.0 / 42.0),
+        (2, 0, 4.0 / 42.0),
+        (-2, 1, 2.0 / 42.0),
+        (-1, 1, 4.0 / 42.0),
+        (0, 1, 8.0 / 42.0),
+        (1, 1, 4.0 / 42.0),
+        (2, 1, 2.0 / 42.0),
+        (-2, 2, 1.0 / 42.0),
+        (-1, 2, 2.0 / 42.0),
+        (0, 2, 4.0 / 42.0),
+        (1, 2, 2.0 / 42.0),
+        (2, 2, 1.0 / 42.0),
+    ],
+}
 
 
 def find_closest_palette_indices(
@@ -90,40 +170,29 @@ def quantize_none(
     return quantized_rgb, indices
 
 
-def quantize_bayer(
+def quantize_ordered(
     rgb_arr: np.ndarray,
     palette: Palette,
-    matrix_size: int = 4,
+    matrix: np.ndarray,
     strength: float = 1.0,
-    perceptual: bool = True
+    perceptual: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Ordered Bayer matrix dithering (classic PC-98, DOS, cross-hatching retro look).
-    matrix_size: 2, 4, or 8
-    strength: scaling factor for dithering spread
+    General ordered dithering using any 2D threshold matrix normalized to [-0.5, 0.5].
+    Works for Bayer (2x2, 4x4, 8x8), Checkerboard, and Blue Noise.
     """
-    if matrix_size == 2:
-        bayer = BAYER_2X2
-    elif matrix_size == 8:
-        bayer = BAYER_8X8
-    else:
-        bayer = BAYER_4X4
-
     H, W, _ = rgb_arr.shape
-    bh, bw = bayer.shape
+    bh, bw = matrix.shape
 
-    # Tile matrix across image dimensions
     tiles_y = (H + bh - 1) // bh
     tiles_x = (W + bw - 1) // bw
-    bayer_tiled = np.tile(bayer, (tiles_y, tiles_x))[:H, :W]
+    matrix_tiled = np.tile(matrix, (tiles_y, tiles_x))[:H, :W]
 
-    # Calculate spread: smaller palettes need larger spread to bridge colors
     num_colors = max(len(palette), 2)
     base_spread = 255.0 / (num_colors ** (1.0 / 3.0))
     spread = base_spread * strength
 
-    # Add dithering offset to RGB
-    dithered_rgb = rgb_arr.astype(np.float32) + (bayer_tiled[:, :, np.newaxis] * spread)
+    dithered_rgb = rgb_arr.astype(np.float32) + (matrix_tiled[:, :, np.newaxis] * spread)
     dithered_rgb = np.clip(dithered_rgb, 0.0, 255.0)
 
     palette_arr = np.array(palette, dtype=np.float32)
@@ -133,16 +202,58 @@ def quantize_bayer(
     return quantized_rgb, indices
 
 
-def quantize_floyd_steinberg(
+def quantize_bayer(
     rgb_arr: np.ndarray,
     palette: Palette,
-    alpha_mask: np.ndarray = None,
+    matrix_size: int = 4,
     strength: float = 1.0,
-    perceptual: bool = True
+    perceptual: bool = True,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Ordered Bayer matrix dithering (classic PC-98, DOS, cross-hatching retro look)."""
+    if matrix_size == 2:
+        matrix = BAYER_2X2
+    elif matrix_size == 8:
+        matrix = BAYER_8X8
+    else:
+        matrix = BAYER_4X4
+    return quantize_ordered(rgb_arr, palette, matrix, strength=strength, perceptual=perceptual)
+
+
+def quantize_checkerboard(
+    rgb_arr: np.ndarray,
+    palette: Palette,
+    strength: float = 1.0,
+    perceptual: bool = True,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Checkerboard 1x1 parity dithering (classic Sega Genesis pseudo-transparency & mesh shading)."""
+    return quantize_ordered(rgb_arr, palette, CHECKERBOARD_2X2, strength=strength, perceptual=perceptual)
+
+
+def quantize_blue_noise(
+    rgb_arr: np.ndarray,
+    palette: Palette,
+    strength: float = 1.0,
+    perceptual: bool = True,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Blue Noise void-and-cluster dithering (organic, high-frequency film grain look)."""
+    return quantize_ordered(rgb_arr, palette, BLUE_NOISE_16X16, strength=strength, perceptual=perceptual)
+
+
+def quantize_error_diffusion(
+    rgb_arr: np.ndarray,
+    palette: Palette,
+    kernel_name: str = "floyd",
+    alpha_mask: Optional[np.ndarray] = None,
+    strength: float = 1.0,
+    perceptual: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Error-diffusion Floyd-Steinberg dithering.
-    Alpha-mask aware: transparent pixels do NOT diffuse error into visible sprite pixels!
+    Error-diffusion dithering supporting multiple classic retro algorithms:
+    - floyd (Floyd-Steinberg 4-neighbor)
+    - atkinson (Bill Atkinson Apple Macintosh 1984)
+    - burkes (Burkes 7-neighbor 2-row)
+    - sierra (Frankie Sierra 7-neighbor 2-row)
+    - stucki (Peter Stucki 12-neighbor 3-row)
     """
     H, W, _ = rgb_arr.shape
     palette_arr = np.array(palette, dtype=np.float32)
@@ -151,31 +262,24 @@ def quantize_floyd_steinberg(
     indices = np.zeros((H, W), dtype=np.uint8)
     quantized_rgb = np.zeros((H, W, 3), dtype=np.uint8)
 
-    # Weights for Floyd-Steinberg: right, down-left, down, down-right
-    # (7/16, 3/16, 5/16, 1/16)
-    w_r = (7.0 / 16.0) * strength
-    w_dl = (3.0 / 16.0) * strength
-    w_d = (5.0 / 16.0) * strength
-    w_dr = (1.0 / 16.0) * strength
+    kernel = DIFFUSION_KERNELS.get(kernel_name.lower().strip(), DIFFUSION_KERNELS["floyd"])
+    scaled_kernel = [(dx, dy, w * strength) for dx, dy, w in kernel]
 
     for y in range(H):
         for x in range(W):
-            # Skip transparent pixels if alpha mask provided
             if alpha_mask is not None and not alpha_mask[y, x]:
                 continue
 
             current_color = np.clip(work_rgb[y, x], 0.0, 255.0)
 
-            # Find closest palette color
+            diff = current_color - palette_arr
             if perceptual:
                 r_bar = 0.5 * (current_color[0] + palette_arr[:, 0])
                 wr = 2.0 + (r_bar / 256.0)
-                wg = 4.0
                 wb = 2.0 + ((255.0 - r_bar) / 256.0)
-                diff = current_color - palette_arr
-                dist_sq = wr * (diff[:, 0] ** 2) + wg * (diff[:, 1] ** 2) + wb * (diff[:, 2] ** 2)
+                dist_sq = wr * (diff[:, 0] ** 2) + 4.0 * (diff[:, 1] ** 2) + wb * (diff[:, 2] ** 2)
             else:
-                dist_sq = np.sum((current_color - palette_arr) ** 2, axis=1)
+                dist_sq = np.sum(diff ** 2, axis=1)
 
             best_idx = int(np.argmin(dist_sq))
             chosen_color = palette_arr[best_idx]
@@ -183,18 +287,38 @@ def quantize_floyd_steinberg(
             indices[y, x] = best_idx
             quantized_rgb[y, x] = chosen_color
 
-            # Quantization error
             err = current_color - chosen_color
 
-            # Distribute error to neighboring pixels (only if neighbor is visible)
-            if x + 1 < W and (alpha_mask is None or alpha_mask[y, x + 1]):
-                work_rgb[y, x + 1] += err * w_r
-            if y + 1 < H:
-                if x > 0 and (alpha_mask is None or alpha_mask[y + 1, x - 1]):
-                    work_rgb[y + 1, x - 1] += err * w_dl
-                if alpha_mask is None or alpha_mask[y + 1, x]:
-                    work_rgb[y + 1, x] += err * w_d
-                if x + 1 < W and (alpha_mask is None or alpha_mask[y + 1, x + 1]):
-                    work_rgb[y + 1, x + 1] += err * w_dr
+            for dx, dy, weight in scaled_kernel:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < W and 0 <= ny < H:
+                    if alpha_mask is None or alpha_mask[ny, nx]:
+                        work_rgb[ny, nx] += err * weight
 
     return quantized_rgb, indices
+
+
+def quantize_floyd_steinberg(
+    rgb_arr: np.ndarray,
+    palette: Palette,
+    alpha_mask: Optional[np.ndarray] = None,
+    strength: float = 1.0,
+    perceptual: bool = True,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Error-diffusion Floyd-Steinberg dithering."""
+    return quantize_error_diffusion(
+        rgb_arr, palette, kernel_name="floyd", alpha_mask=alpha_mask, strength=strength, perceptual=perceptual
+    )
+
+
+def quantize_atkinson(
+    rgb_arr: np.ndarray,
+    palette: Palette,
+    alpha_mask: Optional[np.ndarray] = None,
+    strength: float = 1.0,
+    perceptual: bool = True,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Error-diffusion Atkinson dithering (Apple Macintosh 1984)."""
+    return quantize_error_diffusion(
+        rgb_arr, palette, kernel_name="atkinson", alpha_mask=alpha_mask, strength=strength, perceptual=perceptual
+    )

@@ -159,6 +159,112 @@ PALETTES: Dict[str, Palette] = {
         (255, 235, 59),   # High Voltage Yellow
         (255, 255, 255),  # Pure White
     ],
+    # Sega Genesis / Mega Drive (16-color iconic Sonic/Mega Drive palette)
+    "genesis": [
+        (0, 0, 0),        (255, 255, 255),  (182, 182, 182),  (73, 73, 73),
+        (36, 73, 219),    (0, 146, 255),    (219, 36, 36),    (255, 109, 73),
+        (255, 219, 0),    (255, 146, 0),    (0, 182, 0),      (0, 109, 0),
+        (146, 73, 0),     (219, 146, 73),   (146, 36, 182),   (73, 0, 109),
+    ],
+    # NEC PC-9801 (16-color Japanese retro PC hardware palette)
+    "pc98": [
+        (0, 0, 0),        (0, 0, 255),      (255, 0, 0),      (255, 0, 255),
+        (0, 255, 0),      (0, 255, 255),    (255, 255, 0),    (255, 255, 255),
+        (128, 128, 128),  (0, 0, 128),      (128, 0, 0),      (128, 0, 128),
+        (0, 128, 0),      (0, 128, 128),    (128, 128, 0),    (64, 64, 64),
+    ],
+    # Commodore Amiga OCS (16-color iconic Copper/DeluxePaint palette)
+    "amiga": [
+        (0, 0, 0),        (255, 255, 255),  (170, 170, 170),  (85, 85, 85),
+        (34, 68, 153),    (68, 136, 221),   (136, 204, 255),  (187, 34, 34),
+        (238, 102, 68),   (255, 170, 51),   (255, 238, 85),   (34, 136, 34),
+        (85, 204, 68),    (153, 238, 119),  (102, 51, 17),    (170, 102, 34),
+    ],
+    # Apple II (16-color Wozniak composite NTSC palette)
+    "apple2": [
+        (0, 0, 0),        (114, 38, 64),    (64, 50, 133),    (228, 92, 255),
+        (15, 86, 62),     (128, 128, 128),  (27, 154, 241),   (183, 193, 255),
+        (81, 66, 0),      (235, 109, 32),   (192, 192, 192),  (255, 172, 197),
+        (39, 172, 17),    (204, 211, 87),   (146, 221, 201),  (255, 255, 255),
+    ],
+    # Game Boy Color (GBC - 16-color adventure palette)
+    "gbc": [
+        (8, 8, 16),       (248, 248, 248),  (168, 168, 176),  (88, 88, 96),
+        (248, 56, 56),    (152, 24, 24),    (248, 160, 48),   (248, 224, 56),
+        (40, 184, 48),    (16, 96, 24),     (48, 144, 248),   (24, 48, 160),
+        (168, 72, 224),   (248, 144, 184),  (168, 96, 40),    (96, 48, 16),
+    ],
+    # Sega Game Gear (16-color vibrant handheld palette)
+    "gamegear": [
+        (0, 0, 0),        (255, 255, 255),  (170, 170, 170),  (85, 85, 85),
+        (0, 102, 238),    (0, 187, 255),    (238, 34, 34),    (255, 119, 51),
+        (255, 221, 34),   (0, 170, 51),     (85, 221, 85),    (136, 51, 187),
+        (238, 102, 187),  (153, 85, 34),    (221, 153, 85),   (68, 34, 17),
+    ],
+    # Sega Master System (16-color 6-bit hardware palette)
+    "mastersystem": [
+        (0, 0, 0),        (255, 255, 255),  (170, 170, 170),  (85, 85, 85),
+        (0, 85, 255),     (85, 170, 255),   (255, 0, 0),      (255, 85, 85),
+        (255, 170, 0),    (255, 255, 85),   (0, 170, 0),      (85, 255, 85),
+        (170, 0, 255),    (255, 85, 255),   (170, 85, 0),     (85, 85, 0),
+    ],
+    # Amstrad CPC (16-color classic European computer palette)
+    "amstrad-cpc": [
+        (0, 0, 0),        (0, 0, 128),      (0, 0, 255),      (128, 0, 0),
+        (128, 0, 128),    (128, 0, 255),    (255, 0, 0),      (255, 0, 128),
+        (255, 0, 255),    (0, 128, 0),      (0, 255, 0),      (0, 255, 255),
+        (255, 255, 0),    (255, 255, 128),  (128, 128, 128),  (255, 255, 255),
+    ],
+    # Atari 2600 VCS (16-color NTSC arcade palette)
+    "atari2600": [
+        (0, 0, 0),        (68, 68, 68),     (148, 148, 148),  (252, 252, 252),
+        (184, 40, 40),    (180, 76, 24),    (148, 116, 24),   (92, 140, 24),
+        (36, 148, 36),    (24, 140, 92),    (24, 116, 148),   (24, 76, 180),
+        (40, 40, 184),    (92, 24, 180),    (140, 24, 148),   (180, 24, 92),
+    ],
+    # TIC-80 (Sweetie 16 fantasy console palette)
+    "tic80": [
+        (26, 28, 44),     (93, 39, 93),     (177, 62, 83),    (239, 125, 87),
+        (255, 205, 117),  (167, 240, 112),  (56, 183, 100),   (37, 113, 121),
+        (41, 54, 111),    (59, 93, 201),    (65, 166, 246),   (115, 239, 247),
+        (244, 244, 244),  (148, 176, 194),  (86, 108, 134),   (51, 60, 87),
+    ],
+    # Endesga 32 (Ed's celebrated 32-color modern pixel art palette)
+    "endesga32": [
+        (190, 74, 47),    (215, 118, 67),   (234, 212, 170),  (228, 166, 114),
+        (184, 111, 80),   (115, 62, 57),    (62, 39, 49),     (162, 38, 51),
+        (228, 59, 68),    (247, 118, 34),   (254, 174, 52),   (254, 231, 97),
+        (99, 199, 77),    (62, 137, 72),    (38, 92, 66),     (25, 60, 62),
+        (18, 78, 137),    (0, 153, 219),    (44, 232, 245),   (255, 255, 255),
+        (192, 203, 220),  (139, 155, 180),  (90, 105, 136),   (58, 68, 102),
+        (38, 43, 68),     (24, 20, 37),     (255, 0, 68),     (254, 231, 97),
+        (153, 100, 249),  (94, 52, 194),    (65, 32, 143),    (36, 18, 86),
+    ],
+    # PICO-8 Extended (all 32 colors: original 16 + 16 secret colors)
+    "pico8-secret": [
+        (0, 0, 0),        (29, 43, 83),     (126, 37, 83),    (0, 135, 81),
+        (171, 82, 54),    (95, 87, 79),     (194, 195, 199),  (255, 241, 232),
+        (255, 0, 77),     (255, 163, 0),    (255, 236, 39),   (0, 228, 54),
+        (41, 173, 255),   (131, 118, 156),  (255, 119, 168),  (255, 204, 170),
+        (41, 24, 20),     (17, 29, 53),     (66, 33, 54),     (18, 83, 89),
+        (116, 47, 41),    (73, 51, 59),     (162, 136, 121),  (243, 239, 125),
+        (190, 18, 80),    (255, 108, 36),   (168, 231, 46),   (0, 181, 67),
+        (6, 90, 181),     (117, 70, 101),   (255, 110, 89),   (255, 157, 129),
+    ],
+    # CRT Phosphor Green (IBM 5151 / Apple II Green Monitor)
+    "crt-green": [
+        (0, 0, 0),
+        (16, 64, 16),
+        (32, 160, 32),
+        (64, 255, 64),
+    ],
+    # CRT Amber Terminal (P3 Amber Phosphor)
+    "crt-amber": [
+        (0, 0, 0),
+        (100, 50, 0),
+        (200, 120, 0),
+        (255, 176, 0),
+    ],
 }
 
 
@@ -210,10 +316,23 @@ def snap_color_snes_15bit(rgb: RGBColor) -> RGBColor:
     return (int(r), int(g), int(b))
 
 
-def extract_adaptive_palette(img: Image.Image, num_colors: int = 16, snap_snes: bool = False) -> Palette:
+def snap_color_genesis_9bit(rgb: RGBColor) -> RGBColor:
+    """Snap an 8-bit RGB color to the Sega Genesis 9-bit (3-bit per channel, 8 levels) hardware color grid."""
+    r = round(round(rgb[0] * 7 / 255) * 255 / 7)
+    g = round(round(rgb[1] * 7 / 255) * 255 / 7)
+    b = round(round(rgb[2] * 7 / 255) * 255 / 7)
+    return (int(r), int(g), int(b))
+
+
+def extract_adaptive_palette(
+    img: Image.Image,
+    num_colors: int = 16,
+    snap_snes: bool = False,
+    snap_genesis: bool = False,
+) -> Palette:
     """
     Extract an adaptive N-color palette from an image using Median Cut.
-    Ideal for SNES / GBA sprites where each sprite has a custom 16-color palette.
+    Ideal for SNES / Genesis / GBA sprites where each sprite has a custom 16-color palette.
     """
     rgb_img = img.convert("RGB")
     quantized = rgb_img.quantize(colors=num_colors, method=Image.Quantize.MEDIANCUT)
@@ -224,6 +343,8 @@ def extract_adaptive_palette(img: Image.Image, num_colors: int = 16, snap_snes: 
     ]
     if snap_snes:
         palette = [snap_color_snes_15bit(c) for c in palette]
+    elif snap_genesis:
+        palette = [snap_color_genesis_9bit(c) for c in palette]
     return palette
 
 

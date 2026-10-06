@@ -34,6 +34,20 @@ from .exporters import export_c_header, export_pico8_spritesheet, export_palette
 MIN_TERMINAL_WIDTH = 100
 MIN_TERMINAL_HEIGHT = 28
 
+ENHANCEMENT_PRESETS = {
+    "default": {"contrast": 1.25, "saturation": 1.25, "sharpness": 1.30, "brightness": 1.0, "gamma": 1.0, "warmth": 0.0, "tint": None},
+    "vibrant": {"contrast": 1.35, "saturation": 1.55, "sharpness": 1.35, "brightness": 1.05, "gamma": 1.1, "warmth": 0.1, "tint": None},
+    "contrast": {"contrast": 1.55, "saturation": 1.20, "sharpness": 1.35, "brightness": 0.95, "gamma": 1.2, "warmth": 0.0, "tint": None},
+    "warm-crt": {"contrast": 1.25, "saturation": 1.30, "sharpness": 1.25, "brightness": 1.05, "gamma": 1.1, "warmth": 0.6, "tint": None},
+    "cool-cyber": {"contrast": 1.30, "saturation": 1.35, "sharpness": 1.35, "brightness": 1.0, "gamma": 1.05, "warmth": -0.6, "tint": None},
+    "crt-green": {"contrast": 1.30, "saturation": 1.0, "sharpness": 1.40, "brightness": 1.1, "gamma": 1.15, "warmth": 0.0, "tint": "crt-green"},
+    "crt-amber": {"contrast": 1.30, "saturation": 1.0, "sharpness": 1.40, "brightness": 1.1, "gamma": 1.15, "warmth": 0.0, "tint": "crt-amber"},
+    "sepia": {"contrast": 1.20, "saturation": 1.0, "sharpness": 1.20, "brightness": 1.0, "gamma": 1.0, "warmth": 0.3, "tint": "sepia"},
+    "muted": {"contrast": 1.10, "saturation": 0.85, "sharpness": 1.20, "brightness": 1.05, "gamma": 0.95, "warmth": 0.0, "tint": None},
+    "sharp": {"contrast": 1.30, "saturation": 1.25, "sharpness": 1.70, "brightness": 1.0, "gamma": 1.0, "warmth": 0.0, "tint": None},
+    "flat": {"contrast": 1.0, "saturation": 1.0, "sharpness": 1.0, "brightness": 1.0, "gamma": 1.0, "warmth": 0.0, "tint": None},
+}
+
 
 def resolve_image_path(raw_str: str) -> Optional[Path]:
     """
@@ -658,17 +672,32 @@ class PixelArtStudio(App):
                     ("Adaptive 16 Colors (SNES / GBA Best)", "adaptive"),
                     ("SNES Curated (16 Classic Colors)", "snes"),
                     ("SNES Adaptive (15-bit Hardware Snap)", "snes-adaptive"),
+                    ("Sega Genesis / Mega Drive (16 Colors)", "genesis"),
+                    ("Genesis Adaptive (9-bit Hardware Snap)", "genesis-adaptive"),
                     ("GBA Curated (16 Colors)", "gba"),
                     ("NES (54 Colors)", "nes"),
                     ("Game Boy DMG (4 Greens)", "gameboy"),
                     ("Game Boy Pocket (4 Greys)", "gameboy-pocket"),
-                    ("PICO-8 (16 Colors)", "pico8"),
+                    ("Game Boy Color (16 Colors)", "gbc"),
                     ("Commodore 64 (16 Colors)", "c64"),
+                    ("NEC PC-9801 (16 Colors)", "pc98"),
+                    ("Amiga OCS (16 Colors)", "amiga"),
+                    ("Apple II (16 Colors)", "apple2"),
+                    ("Amstrad CPC (16 Colors)", "amstrad-cpc"),
+                    ("Sega Master System (16 Colors)", "mastersystem"),
+                    ("Sega Game Gear (16 Colors)", "gamegear"),
+                    ("Atari 2600 VCS (16 Colors)", "atari2600"),
+                    ("PICO-8 (16 Colors)", "pico8"),
+                    ("PICO-8 Secret (32 Colors)", "pico8-secret"),
+                    ("TIC-80 (Sweetie 16)", "tic80"),
                     ("CGA Mode 1 (Cyan/Magenta)", "cga-mode1"),
                     ("CGA Mode 0 (Green/Red)", "cga-mode0"),
                     ("ZX Spectrum (15 Colors)", "zx-spectrum"),
-                    ("1-Bit Monochrome (B&W)", "1bit"),
+                    ("Endesga 32 (Modern Pixel Art)", "endesga32"),
                     ("Cyberpunk Synthwave", "cyberpunk"),
+                    ("1-Bit Monochrome (B&W)", "1bit"),
+                    ("CRT Phosphor Green (Terminal)", "crt-green"),
+                    ("CRT Amber Phosphor (Terminal)", "crt-amber"),
                 ]
                 yield Select(palette_options, value="adaptive", id="select-palette", allow_blank=False)
 
@@ -678,7 +707,13 @@ class PixelArtStudio(App):
                     ("Bayer 4x4 (Classic Crosshatch)", "bayer-4x4"),
                     ("Bayer 2x2 (Coarse Crosshatch)", "bayer-2x2"),
                     ("Bayer 8x8 (Fine Ordered)", "bayer-8x8"),
-                    ("Floyd-Steinberg (Diffusion)", "floyd"),
+                    ("Checkerboard (1x1 Genesis Mesh)", "checkerboard"),
+                    ("Blue Noise (Organic Grain / Obra Dinn)", "blue-noise"),
+                    ("Floyd-Steinberg (Error Diffusion)", "floyd"),
+                    ("Atkinson (Apple Mac 1984 Crisp)", "atkinson"),
+                    ("Burkes (Fast Error Diffusion)", "burkes"),
+                    ("Sierra (Two-Row Smooth Diffusion)", "sierra"),
+                    ("Stucki (High-Detail Error Diffusion)", "stucki"),
                 ]
                 yield Select(dither_options, value="none", id="select-dither", allow_blank=False)
 
@@ -687,16 +722,20 @@ class PixelArtStudio(App):
                     yield Switch(value=False, id="switch-outline")
 
                 yield Label("Color Enhancement:", classes="field-label")
-                yield Select(
-                    [
-                        ("Neutral (1.0x)", "1.0"),
-                        ("Vibrant / Punchy (1.25x)", "1.25"),
-                        ("High Contrast (1.5x)", "1.5"),
-                    ],
-                    value="1.25",
-                    id="select-enhance",
-                    allow_blank=False,
-                )
+                enhance_options = [
+                    ("Default Balanced (1.25x)", "default"),
+                    ("Vibrant Arcade (Punchy Saturation)", "vibrant"),
+                    ("High Contrast (Dramatic Shadows)", "contrast"),
+                    ("Warm CRT Glow (Amber Warmth)", "warm-crt"),
+                    ("Cool Cyberpunk (Cyan/Blue Shift)", "cool-cyber"),
+                    ("CRT Green Phosphor (Matrix Terminal)", "crt-green"),
+                    ("CRT Amber Terminal (Phosphor Amber)", "crt-amber"),
+                    ("Sepia Nostalgia (Vintage Tone)", "sepia"),
+                    ("Muted / Pastel (Soft Indie Style)", "muted"),
+                    ("Crisp Edge Detail (Sharp Pixels)", "sharp"),
+                    ("Natural / Flat (1.0x Neutral)", "flat"),
+                ]
+                yield Select(enhance_options, value="default", id="select-enhance", allow_blank=False)
 
                 yield Rule()
                 yield Label("EXPORT ASSETS", classes="section-title")
@@ -874,8 +913,27 @@ class PixelArtStudio(App):
             aspect_mode = str(self.query_one("#select-aspect", Select).value)
             palette_val = str(self.query_one("#select-palette", Select).value)
             dither_val = str(self.query_one("#select-dither", Select).value)
-            outline_val = bool(self.query_one("#switch-outline", Switch).value)
-            enhance_val = float(self.query_one("#select-enhance", Select).value)
+            # Resolve color enhancement preset
+            enhance_key = str(self.query_one("#select-enhance", Select).value).lower()
+            if enhance_key in ENHANCEMENT_PRESETS:
+                ep = ENHANCEMENT_PRESETS[enhance_key]
+                con_val = ep["contrast"]
+                sat_val = ep["saturation"]
+                shp_val = ep["sharpness"]
+                bri_val = ep["brightness"]
+                gam_val = ep["gamma"]
+                wrm_val = ep["warmth"]
+                tnt_val = ep["tint"]
+            else:
+                try:
+                    num = float(enhance_key)
+                    con_val = sat_val = num
+                except ValueError:
+                    con_val = sat_val = 1.25
+                shp_val = 1.30
+                bri_val = gam_val = 1.0
+                wrm_val = 0.0
+                tnt_val = None
 
             # Resolution calculation
             effective_w, effective_h = source_to_render.size
@@ -901,8 +959,13 @@ class PixelArtStudio(App):
                 palette_name_or_spec=palette_val,
                 dither_mode=dither_val,
                 add_outline=outline_val,
-                contrast=enhance_val,
-                saturation=enhance_val,
+                contrast=con_val,
+                saturation=sat_val,
+                sharpness=shp_val,
+                brightness=bri_val,
+                gamma=gam_val,
+                warmth=wrm_val,
+                tint=tnt_val,
                 crop_box=crop_box,
             )
 

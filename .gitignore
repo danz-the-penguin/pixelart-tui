@@ -20,9 +20,16 @@ venv/
 # Test output exports
 output_*
 rome_*
+big_ben_*
+bob-3d-s_*
 sample_input_*
 *.h
 *.txt
 *.json
 !pyproject.toml
 !uv.lock
+
+# Local user test images
+rome.png
+london.png
+bob-3d-s.png

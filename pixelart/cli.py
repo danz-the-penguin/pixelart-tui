@@ -97,8 +97,12 @@ Examples:
     parser.add_argument(
         "--dither",
         default="none",
-        choices=["none", "bayer-2x2", "bayer-4x4", "bayer-8x8", "floyd"],
-        help="Dithering algorithm: none (flat retro), bayer-4x4 (crosshatch), floyd (error diffusion) (default: none)",
+        choices=[
+            "none", "bayer-2x2", "bayer-4x4", "bayer-8x8",
+            "checkerboard", "blue-noise", "floyd", "atkinson",
+            "burkes", "sierra", "stucki"
+        ],
+        help="Dithering algorithm: none, bayer-4x4, checkerboard, blue-noise, floyd, atkinson, burkes, sierra, stucki (default: none)",
     )
     parser.add_argument(
         "--dither-strength",
@@ -144,6 +148,30 @@ Examples:
         type=float,
         default=1.3,
         help="Sharpness boost before downscaling (default: 1.3)",
+    )
+    parser.add_argument(
+        "--brightness",
+        type=float,
+        default=1.0,
+        help="Brightness adjustment before downscaling (default: 1.0)",
+    )
+    parser.add_argument(
+        "--gamma",
+        type=float,
+        default=1.0,
+        help="CRT gamma curve adjustment (default: 1.0)",
+    )
+    parser.add_argument(
+        "--warmth",
+        type=float,
+        default=0.0,
+        help="Color temperature shift from -1.0 (cool cyber) to +1.0 (warm CRT glow) (default: 0.0)",
+    )
+    parser.add_argument(
+        "--tint",
+        choices=["none", "crt-green", "crt-amber", "sepia", "monochrome"],
+        default="none",
+        help="Retro CRT monitor tint filter (none, crt-green, crt-amber, sepia, monochrome)",
     )
     parser.add_argument(
         "--resample",
@@ -251,6 +279,10 @@ def main(argv=None):
             contrast=args.contrast,
             saturation=args.saturation,
             sharpness=args.sharpness,
+            brightness=args.brightness,
+            gamma=args.gamma,
+            warmth=args.warmth,
+            tint=args.tint,
             add_outline=args.outline,
             outline_color=outline_rgb,
             crop_box=tuple(args.crop) if args.crop else None,

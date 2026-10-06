@@ -14,7 +14,11 @@ from .palettes import (
 from .dither import (
     quantize_none,
     quantize_bayer,
+    quantize_checkerboard,
+    quantize_blue_noise,
     quantize_floyd_steinberg,
+    quantize_atkinson,
+    quantize_error_diffusion,
 )
 
 
@@ -29,21 +33,98 @@ RESAMPLE_METHODS = {
 
 def preprocess_image(
     img: Image.Image,
-    contrast: float = 1.2,
-    saturation: float = 1.2,
-    sharpness: float = 1.3,
+    contrast: float = 1.25,
+    saturation: float = 1.25,
+    sharpness: float = 1.30,
+    brightness: float = 1.0,
+    gamma: float = 1.0,
+    warmth: float = 0.0,
+    tint: Optional[str] = None,
 ) -> Image.Image:
     """
-    Enhance contrast, saturation, and sharpness to prevent washed-out,
-    muddy colors when downscaling to low retro resolutions.
+    Enhance colors, contrast, sharpness, brightness, gamma, warmth, and retro tint
+    to achieve punchy, authentic retro console aesthetics before downscaling.
     """
     processed = img
+
+    # 1. Brightness
+    if brightness != 1.0:
+        processed = ImageEnhance.Brightness(processed).enhance(brightness)
+
+    # 2. Contrast
     if contrast != 1.0:
         processed = ImageEnhance.Contrast(processed).enhance(contrast)
+
+    # 3. Saturation / Color
     if saturation != 1.0 and processed.mode in ("RGB", "RGBA"):
         processed = ImageEnhance.Color(processed).enhance(saturation)
+
+    # 4. Sharpness
     if sharpness != 1.0:
         processed = ImageEnhance.Sharpness(processed).enhance(sharpness)
+
+    # 5. Gamma correction (CRT display gamma curve simulation)
+    if gamma != 1.0 and gamma > 0:
+        inv_gamma = 1.0 / gamma
+        lut = [min(255, int(((i / 255.0) ** inv_gamma) * 255 + 0.5)) for i in range(256)]
+        if processed.mode == "RGBA":
+            r, g, b, a = processed.split()
+            processed = Image.merge("RGBA", (r.point(lut), g.point(lut), b.point(lut), a))
+        elif processed.mode == "RGB":
+            processed = processed.point(lut * 3)
+
+    # 6. Warmth / Color Temperature Shift (-1.0 cool cyber to +1.0 warm CRT glow)
+    if warmth != 0.0 and processed.mode in ("RGB", "RGBA"):
+        arr = np.array(processed, dtype=np.float32)
+        delta = warmth * 28.0
+        arr[:, :, 0] = np.clip(arr[:, :, 0] + delta, 0, 255)
+        arr[:, :, 2] = np.clip(arr[:, :, 2] - delta, 0, 255)
+        processed = Image.fromarray(arr.astype(np.uint8), mode=processed.mode)
+
+    # 7. Retro monitor tints
+    if tint:
+        t_clean = tint.lower().strip()
+        if t_clean in ("crt-green", "green-phosphor"):
+            gray = processed.convert("L")
+            g_arr = np.array(gray, dtype=np.float32) / 255.0
+            r = (g_arr * 30).astype(np.uint8)
+            g = (g_arr * 230 + 20).astype(np.uint8)
+            b = (g_arr * 40).astype(np.uint8)
+            if processed.mode == "RGBA":
+                a = np.array(processed)[:, :, 3]
+                processed = Image.fromarray(np.stack([r, g, b, a], axis=-1), mode="RGBA")
+            else:
+                processed = Image.fromarray(np.stack([r, g, b], axis=-1), mode="RGB")
+        elif t_clean in ("crt-amber", "amber-phosphor"):
+            gray = processed.convert("L")
+            g_arr = np.array(gray, dtype=np.float32) / 255.0
+            r = (g_arr * 255).astype(np.uint8)
+            g = (g_arr * 165).astype(np.uint8)
+            b = (g_arr * 10).astype(np.uint8)
+            if processed.mode == "RGBA":
+                a = np.array(processed)[:, :, 3]
+                processed = Image.fromarray(np.stack([r, g, b, a], axis=-1), mode="RGBA")
+            else:
+                processed = Image.fromarray(np.stack([r, g, b], axis=-1), mode="RGB")
+        elif t_clean in ("sepia", "vintage"):
+            gray = processed.convert("L")
+            g_arr = np.array(gray, dtype=np.float32) / 255.0
+            r = np.clip(g_arr * 240 + 20, 0, 255).astype(np.uint8)
+            g = np.clip(g_arr * 200 + 10, 0, 255).astype(np.uint8)
+            b = np.clip(g_arr * 145, 0, 255).astype(np.uint8)
+            if processed.mode == "RGBA":
+                a = np.array(processed)[:, :, 3]
+                processed = Image.fromarray(np.stack([r, g, b, a], axis=-1), mode="RGBA")
+            else:
+                processed = Image.fromarray(np.stack([r, g, b], axis=-1), mode="RGB")
+        elif t_clean in ("monochrome", "bw", "grayscale"):
+            gray = processed.convert("L")
+            if processed.mode == "RGBA":
+                a = processed.split()[3]
+                processed = Image.merge("RGBA", (gray, gray, gray, a))
+            else:
+                processed = gray.convert("RGB")
+
     return processed
 
 
@@ -124,9 +205,13 @@ def convert_to_pixel_art(
     dither_strength: float = 1.0,
     bayer_matrix_size: int = 4,
     resample_method: str = "lanczos",
-    contrast: float = 1.2,
-    saturation: float = 1.2,
-    sharpness: float = 1.3,
+    contrast: float = 1.25,
+    saturation: float = 1.25,
+    sharpness: float = 1.30,
+    brightness: float = 1.0,
+    gamma: float = 1.0,
+    warmth: float = 0.0,
+    tint: Optional[str] = None,
     alpha_threshold: int = 128,
     add_outline: bool = False,
     outline_color: RGBColor = (0, 0, 0),
@@ -162,12 +247,16 @@ def convert_to_pixel_art(
     else:
         img_rgba = img.convert("RGB")
 
-    # 3. Preprocess contrast, saturation, sharpness
+    # 3. Preprocess contrast, saturation, sharpness, brightness, gamma, warmth, and tint
     preprocessed = preprocess_image(
         img_rgba,
         contrast=contrast,
         saturation=saturation,
         sharpness=sharpness,
+        brightness=brightness,
+        gamma=gamma,
+        warmth=warmth,
+        tint=tint,
     )
 
     # 4. Downscale to retro pixel dimensions
@@ -191,6 +280,8 @@ def convert_to_pixel_art(
         palette = extract_adaptive_palette(low_res_img, num_colors=num_adaptive_colors)
     elif palette_lower in ("snes-adaptive", "snes-15bit"):
         palette = extract_adaptive_palette(low_res_img, num_colors=16, snap_snes=True)
+    elif palette_lower in ("genesis-adaptive", "megadrive-adaptive", "genesis-9bit"):
+        palette = extract_adaptive_palette(low_res_img, num_colors=16, snap_genesis=True)
     else:
         preset = get_palette_by_name(palette_lower)
         if preset is not None:
@@ -211,6 +302,37 @@ def convert_to_pixel_art(
             low_res_rgb,
             palette,
             matrix_size=matrix_sz,
+            strength=dither_strength,
+            perceptual=perceptual,
+        )
+    elif dither_clean in ("checkerboard", "checker", "mesh"):
+        quantized_rgb, indices = quantize_checkerboard(
+            low_res_rgb,
+            palette,
+            strength=dither_strength,
+            perceptual=perceptual,
+        )
+    elif dither_clean in ("blue-noise", "bluenoise", "blue"):
+        quantized_rgb, indices = quantize_blue_noise(
+            low_res_rgb,
+            palette,
+            strength=dither_strength,
+            perceptual=perceptual,
+        )
+    elif dither_clean in ("atkinson", "mac", "macintosh"):
+        quantized_rgb, indices = quantize_atkinson(
+            low_res_rgb,
+            palette,
+            alpha_mask=alpha_mask,
+            strength=dither_strength,
+            perceptual=perceptual,
+        )
+    elif dither_clean in ("burkes", "sierra", "stucki"):
+        quantized_rgb, indices = quantize_error_diffusion(
+            low_res_rgb,
+            palette,
+            kernel_name=dither_clean,
+            alpha_mask=alpha_mask,
             strength=dither_strength,
             perceptual=perceptual,
         )
