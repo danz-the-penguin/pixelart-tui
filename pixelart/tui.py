@@ -1,12 +1,13 @@
 """Interactive Terminal User Interface (TUI) for ImageToPixelArt using Textual."""
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Tuple
 import numpy as np
 from PIL import Image
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.screen import ModalScreen
 from textual.widgets import (
     Header,
     Footer,
@@ -17,14 +18,80 @@ from textual.widgets import (
     Label,
     Static,
     Rule,
+    DirectoryTree,
 )
 from textual.reactive import reactive
 from rich.text import Text
 from rich.style import Style
 
-from .converter import convert_to_pixel_art, upscale_nearest
+from .converter import convert_to_pixel_art, upscale_nearest, calculate_target_size
 from .palettes import PALETTES, hex_to_rgb, rgb_to_hex
 from .exporters import export_c_header, export_pico8_spritesheet, export_palette_json
+
+
+def resolve_image_path(raw_str: str) -> Optional[Path]:
+    """
+    Robustly resolve an image path string from terminal input.
+    Handles quotes ('path', "path"), escaped spaces (path\\ with\\ spaces),
+    tilde expansion (~/...), relative paths, and missing extensions (.png, .jpg).
+    """
+    if not raw_str or not raw_str.strip():
+        return None
+
+    cleaned = raw_str.strip()
+
+    # Strip outer single or double quotes (added by macOS Terminal drag & drop)
+    if (cleaned.startswith('"') and cleaned.endswith('"')) or (
+        cleaned.startswith("'") and cleaned.endswith("'")
+    ):
+        cleaned = cleaned[1:-1].strip()
+
+    # Unescape escaped spaces
+    cleaned = cleaned.replace(r"\ ", " ")
+
+    # Expand tilde and user variables
+    p = Path(cleaned).expanduser()
+
+    # Direct check
+    if p.is_file():
+        return p.resolve()
+
+    # Relative to current working directory
+    if not p.is_absolute():
+        cwd_p = (Path.cwd() / cleaned).resolve()
+        if cwd_p.is_file():
+            return cwd_p
+
+    # Try matching common image extensions if user typed name without extension
+    for ext in (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"):
+        cand = p.with_suffix(ext)
+        if cand.is_file():
+            return cand.resolve()
+        cand_cwd = (Path.cwd() / cleaned).with_suffix(ext).resolve()
+        if cand_cwd.is_file():
+            return cand_cwd
+
+    return None
+
+
+def get_available_local_images() -> List[Tuple[str, str]]:
+    """Scan current directory for user images to populate quick-select dropdown."""
+    exts = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+    cwd = Path.cwd()
+    images = []
+
+    # Filter out generated test exports to keep list clean
+    for item in sorted(cwd.iterdir()):
+        if item.is_file() and item.suffix.lower() in exts:
+            name = item.name
+            if name.startswith("output_") or name.endswith("_pico8.png"):
+                continue
+            images.append((f"🖼️ {name}", str(item.resolve())))
+
+    if not images:
+        images.append(("None found in folder", ""))
+
+    return images
 
 
 def render_image_to_rich_text(img: Image.Image) -> Text:
@@ -47,13 +114,10 @@ def render_image_to_rich_text(img: Image.Image) -> Text:
             if not top_visible and not bot_visible:
                 text.append(" ")
             elif top_visible and not bot_visible:
-                # Top opaque, bottom transparent -> upper half block
                 text.append("▀", style=Style(color=f"rgb({top[0]},{top[1]},{top[2]})"))
             elif not top_visible and bot_visible:
-                # Top transparent, bottom opaque -> lower half block
                 text.append("▄", style=Style(color=f"rgb({bot[0]},{bot[1]},{bot[2]})"))
             else:
-                # Both opaque -> upper half block with fg=top, bg=bottom
                 text.append(
                     "▀",
                     style=Style(
@@ -67,13 +131,63 @@ def render_image_to_rich_text(img: Image.Image) -> Text:
     return text
 
 
+class FilePickerModal(ModalScreen[Optional[Path]]):
+    """Visual file tree modal to browse and select image files."""
+
+    CSS = """
+    FilePickerModal {
+        align: center middle;
+        background: rgba(0, 0, 0, 0.75);
+    }
+
+    #picker-dialog {
+        width: 84;
+        height: 32;
+        border: thick #58a6ff;
+        background: #161b22;
+        padding: 1 2;
+    }
+
+    #tree-container {
+        height: 1fr;
+        border: round #30363d;
+        margin: 1 0;
+        background: #0d1117;
+    }
+
+    #modal-actions {
+        height: auto;
+        align: right middle;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="picker-dialog"):
+            yield Label("📂 Browse & Select Image", classes="section-title")
+            with VerticalScroll(id="tree-container"):
+                yield DirectoryTree(str(Path.cwd()), id="dir-tree")
+            with Horizontal(id="modal-actions"):
+                yield Button("Cancel", id="btn-cancel", variant="default")
+
+    def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
+        path = Path(event.path)
+        if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}:
+            self.dismiss(path)
+        else:
+            self.notify(f"Selected file is not a supported image: {path.name}", severity="warning")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-cancel":
+            self.dismiss(None)
+
+
 class CanvasWidget(Static):
     """Widget displaying the live pixel art sprite in terminal cells."""
 
     DEFAULT_CSS = """
     CanvasWidget {
         width: 100%;
-        height: 100%;
+        height: 1fr;
         content-align: center middle;
         overflow: auto auto;
         background: #11141c;
@@ -98,7 +212,7 @@ class PixelArtStudio(App):
     }
 
     #sidebar {
-        width: 44;
+        width: 46;
         height: 100%;
         background: #161b22;
         border-right: solid #30363d;
@@ -123,7 +237,7 @@ class PixelArtStudio(App):
         margin-top: 1;
     }
 
-    .export-btn {
+    .action-btn {
         width: 100%;
         margin-top: 1;
     }
@@ -148,6 +262,20 @@ class PixelArtStudio(App):
         margin-bottom: 1;
     }
 
+    .button-row {
+        height: auto;
+        margin-top: 1;
+    }
+
+    .button-row Button {
+        width: 1fr;
+        margin-right: 1;
+    }
+
+    .button-row Button:last-of-type {
+        margin-right: 0;
+    }
+
     Switch {
         margin-top: 1;
     }
@@ -160,6 +288,7 @@ class PixelArtStudio(App):
 
     BINDINGS = [
         ("q", "quit", "Quit"),
+        ("b", "browse_files", "Browse Files"),
         ("s", "save_preview", "Save PNG"),
         ("c", "export_c", "Export C"),
         ("p", "export_pico8", "Export PICO-8"),
@@ -181,12 +310,27 @@ class PixelArtStudio(App):
             # Left Control Sidebar
             with VerticalScroll(id="sidebar"):
                 yield Label("SOURCE IMAGE", classes="section-title")
+
+                # Quick pick dropdown
+                local_images = get_available_local_images()
+                yield Label("Quick Select in Folder:", classes="field-label")
+                yield Select(
+                    local_images,
+                    prompt="Choose image in current directory...",
+                    id="select-quick-image",
+                    allow_blank=True,
+                )
+
+                yield Label("Or Enter / Paste Path:", classes="field-label")
                 yield Input(
-                    placeholder="Path to image...",
+                    placeholder="e.g. rome.png or /path/to/img",
                     id="input-path",
                     value=self.initial_image or "sample_input.png",
                 )
-                yield Button("Load Image", id="btn-load", variant="primary", classes="export-btn")
+
+                with Horizontal(classes="button-row"):
+                    yield Button("Load", id="btn-load", variant="primary")
+                    yield Button("📂 Browse...", id="btn-browse", variant="default")
 
                 yield Rule()
                 yield Label("SPRITE SETTINGS", classes="section-title")
@@ -194,16 +338,27 @@ class PixelArtStudio(App):
                 yield Label("Target Resolution:", classes="field-label")
                 yield Select(
                     [
-                        ("16 x 16 (Tiny Icon)", "16"),
-                        ("24 x 24 (Classic RPG)", "24"),
-                        ("32 x 32 (Standard Sprite)", "32"),
-                        ("48 x 48 (Detailed Character)", "48"),
-                        ("64 x 64 (Portrait / Boss)", "64"),
-                        ("96 x 96 (Large Scene)", "96"),
-                        ("128 x 128 (High Res Retro)", "128"),
+                        ("16 px (Tiny Icon)", "16"),
+                        ("24 px (Classic RPG)", "24"),
+                        ("32 px (Standard Sprite)", "32"),
+                        ("48 px (Detailed Character)", "48"),
+                        ("64 px (Portrait / Boss)", "64"),
+                        ("96 px (Large Scene)", "96"),
+                        ("128 px (High Res Retro)", "128"),
                     ],
                     value="32",
                     id="select-resolution",
+                    allow_blank=False,
+                )
+
+                yield Label("Aspect Ratio Mode:", classes="field-label")
+                yield Select(
+                    [
+                        ("Fit Proportional (Recommended)", "fit"),
+                        ("Force Square (NxN)", "square"),
+                    ],
+                    value="fit",
+                    id="select-aspect",
                     allow_blank=False,
                 )
 
@@ -265,10 +420,10 @@ class PixelArtStudio(App):
                     allow_blank=False,
                 )
 
-                yield Button("💾 Save Preview PNG", id="btn-save-preview", variant="success", classes="export-btn")
-                yield Button("📦 Save Native 1x Sprite", id="btn-save-raw", variant="default", classes="export-btn")
-                yield Button("🕹️ Export C Header (.h)", id="btn-export-c", variant="default", classes="export-btn")
-                yield Button("👾 Export PICO-8 String", id="btn-export-pico8", variant="default", classes="export-btn")
+                yield Button("💾 Save Preview PNG", id="btn-save-preview", variant="success", classes="action-btn")
+                yield Button("📦 Save Native 1x Sprite", id="btn-save-raw", variant="default", classes="action-btn")
+                yield Button("🕹️ Export C Header (.h)", id="btn-export-c", variant="default", classes="action-btn")
+                yield Button("👾 Export PICO-8 String", id="btn-export-pico8", variant="default", classes="action-btn")
 
             # Right Preview Area
             with Vertical(id="preview-area"):
@@ -280,29 +435,57 @@ class PixelArtStudio(App):
 
     def on_mount(self) -> None:
         """Load initial image upon launch."""
-        initial_path = self.initial_image or "sample_input.png"
-        self.load_image(initial_path)
+        initial_path = self.initial_image
+        if not initial_path:
+            if Path("rome.png").exists():
+                initial_path = "rome.png"
+            elif Path("sample_input.png").exists():
+                initial_path = "sample_input.png"
+            else:
+                local_images = get_available_local_images()
+                if local_images and local_images[0][1]:
+                    initial_path = local_images[0][1]
+        if initial_path:
+            self.load_image(str(initial_path))
 
     def set_status(self, message: str, is_error: bool = False) -> None:
-        """Update bottom status banner."""
+        """Update bottom status banner and trigger visual notification toast."""
         status_bar = self.query_one("#status-bar", Static)
         prefix = "❌ " if is_error else "✨ "
         status_bar.update(f"{prefix}{message}")
 
     def load_image(self, file_path_str: str) -> None:
-        """Load source image from disk."""
-        path = Path(file_path_str)
-        if not path.exists():
-            self.set_status(f"File not found: {file_path_str}", is_error=True)
+        """Robustly resolve and load an image from user string."""
+        resolved = resolve_image_path(file_path_str)
+        if not resolved:
+            self.set_status(f"File not found: '{file_path_str}'", is_error=True)
+            self.notify(f"Could not find: '{file_path_str}'. Check file name or path.", title="File Not Found", severity="error")
             return
 
         try:
-            self.current_source_img = Image.open(path)
-            self.current_image_path = str(path)
-            self.set_status(f"Loaded {path.name} ({self.current_source_img.width}x{self.current_source_img.height})")
+            self.current_source_img = Image.open(resolved)
+            self.current_image_path = str(resolved)
+
+            # Update input field display
+            inp = self.query_one("#input-path", Input)
+            inp.value = resolved.name
+
+            # Also sync select-quick-image if this file is in options
+            quick_select = self.query_one("#select-quick-image", Select)
+            for _, val in quick_select._options:
+                if val and str(val) == str(resolved):
+                    if quick_select.value != val:
+                        quick_select.value = val
+                    break
+
+            msg = f"Loaded {resolved.name} ({self.current_source_img.width}x{self.current_source_img.height})"
+            self.set_status(msg)
+            self.notify(msg, title="Image Loaded", severity="information")
             self.reprocess_pixel_art()
         except Exception as e:
-            self.set_status(f"Error opening image: {e}", is_error=True)
+            err_msg = f"Error opening image: {e}"
+            self.set_status(err_msg, is_error=True)
+            self.notify(err_msg, title="Image Error", severity="error")
 
     def reprocess_pixel_art(self) -> None:
         """Re-run conversion pipeline and update canvas."""
@@ -312,15 +495,26 @@ class PixelArtStudio(App):
         try:
             # Query control values
             res_val = int(self.query_one("#select-resolution", Select).value)
+            aspect_mode = str(self.query_one("#select-aspect", Select).value)
             palette_val = str(self.query_one("#select-palette", Select).value)
             dither_val = str(self.query_one("#select-dither", Select).value)
             outline_val = bool(self.query_one("#switch-outline", Switch).value)
             enhance_val = float(self.query_one("#select-enhance", Select).value)
 
+            # Aspect ratio calculation
+            if aspect_mode == "fit":
+                target_w, target_h = calculate_target_size(
+                    self.current_source_img.width,
+                    self.current_source_img.height,
+                    max_dimension=res_val,
+                )
+            else:
+                target_w, target_h = res_val, res_val
+
             sprite, indices, palette = convert_to_pixel_art(
                 self.current_source_img,
-                target_width=res_val,
-                target_height=res_val,
+                target_width=target_w,
+                target_height=target_h,
                 palette_name_or_spec=palette_val,
                 dither_mode=dither_val,
                 add_outline=outline_val,
@@ -352,7 +546,16 @@ class PixelArtStudio(App):
         btn_id = event.button.id
         if btn_id == "btn-load":
             path_input = self.query_one("#input-path", Input).value.strip()
-            self.load_image(path_input)
+            if not path_input:
+                quick_sel = self.query_one("#select-quick-image", Select)
+                if not quick_sel.is_blank() and quick_sel.value:
+                    path_input = str(quick_sel.value)
+            if path_input:
+                self.load_image(path_input)
+            else:
+                self.notify("Please enter a path or pick an image", severity="warning")
+        elif btn_id == "btn-browse":
+            self.action_browse_files()
         elif btn_id == "btn-save-preview":
             self.action_save_preview()
         elif btn_id == "btn-save-raw":
@@ -363,7 +566,13 @@ class PixelArtStudio(App):
             self.action_export_pico8()
 
     def on_select_changed(self, event: Select.Changed) -> None:
-        self.reprocess_pixel_art()
+        if event.select.id == "select-quick-image":
+            if not event.select.is_blank() and event.value:
+                val_str = str(event.value)
+                if val_str != str(self.current_image_path):
+                    self.load_image(val_str)
+        else:
+            self.reprocess_pixel_art()
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
         self.reprocess_pixel_art()
@@ -373,9 +582,18 @@ class PixelArtStudio(App):
             self.load_image(event.value.strip())
 
     # Actions
+    def action_browse_files(self) -> None:
+        """Open visual file picker modal."""
+        def handle_file_choice(chosen_path: Optional[Path]) -> None:
+            if chosen_path is not None:
+                self.load_image(str(chosen_path))
+
+        self.push_screen(FilePickerModal(), handle_file_choice)
+
     def action_save_preview(self) -> None:
         if self.processed_sprite is None or not self.current_image_path:
             self.set_status("No processed sprite to save", is_error=True)
+            self.notify("No processed sprite to save", severity="warning")
             return
 
         scale = int(self.query_one("#select-scale", Select).value)
@@ -386,11 +604,14 @@ class PixelArtStudio(App):
 
         upscaled = upscale_nearest(self.processed_sprite, scale=scale)
         upscaled.save(out_path)
-        self.set_status(f"Saved preview ({upscaled.width}x{upscaled.height}): {out_name}")
+        msg = f"Saved preview ({upscaled.width}x{upscaled.height}): {out_name}"
+        self.set_status(msg)
+        self.notify(msg, title="Export Complete", severity="information")
 
     def save_raw_sprite(self) -> None:
         if self.processed_sprite is None or not self.current_image_path:
             self.set_status("No processed sprite to save", is_error=True)
+            self.notify("No processed sprite to save", severity="warning")
             return
 
         in_path = Path(self.current_image_path)
@@ -400,11 +621,14 @@ class PixelArtStudio(App):
         out_path = in_path.parent / out_name
 
         self.processed_sprite.save(out_path)
-        self.set_status(f"Saved 1x native sprite ({w}x{h}): {out_name}")
+        msg = f"Saved 1x native sprite ({w}x{h}): {out_name}"
+        self.set_status(msg)
+        self.notify(msg, title="Export Complete", severity="information")
 
     def action_export_c(self) -> None:
         if self.last_indices is None or self.last_palette is None or not self.current_image_path:
             self.set_status("No processed sprite to export", is_error=True)
+            self.notify("No processed sprite to export", severity="warning")
             return
 
         in_path = Path(self.current_image_path)
@@ -412,11 +636,14 @@ class PixelArtStudio(App):
         out_path = in_path.parent / out_name
 
         export_c_header(self.last_indices, self.last_palette, name=in_path.stem, output_path=str(out_path))
-        self.set_status(f"Exported C header: {out_name}")
+        msg = f"Exported C header: {out_name}"
+        self.set_status(msg)
+        self.notify(msg, title="Export Complete", severity="information")
 
     def action_export_pico8(self) -> None:
         if self.last_indices is None or not self.current_image_path:
             self.set_status("No processed sprite to export", is_error=True)
+            self.notify("No processed sprite to export", severity="warning")
             return
 
         in_path = Path(self.current_image_path)
@@ -424,7 +651,9 @@ class PixelArtStudio(App):
         out_path = in_path.parent / out_name
 
         export_pico8_spritesheet(self.last_indices, output_path=str(out_path))
-        self.set_status(f"Exported PICO-8 sprite data: {out_name}")
+        msg = f"Exported PICO-8 sprite data: {out_name}"
+        self.set_status(msg)
+        self.notify(msg, title="Export Complete", severity="information")
 
 
 def run_tui(initial_image: Optional[str] = None):
