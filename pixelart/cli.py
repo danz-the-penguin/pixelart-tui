@@ -1,7 +1,6 @@
 """Command-line interface for converting images to retro pixel art."""
 
 import argparse
-import os
 import sys
 from pathlib import Path
 from PIL import Image
@@ -33,7 +32,7 @@ def parse_args(argv=None):
         prog="pixelart",
         description="Transform modern images into authentic retro pixel art sprites.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=f"""
+        epilog="""
 Examples:
   # Basic conversion (PICO-8 palette, 64px max, 8x upscaled preview):
   pixelart character.png -o character_pixel.png

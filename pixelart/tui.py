@@ -28,8 +28,7 @@ from rich.text import Text
 from rich.style import Style
 
 from .converter import convert_to_pixel_art, upscale_nearest, calculate_target_size
-from .palettes import PALETTES, hex_to_rgb, rgb_to_hex
-from .exporters import export_c_header, export_pico8_spritesheet, export_palette_json
+from .exporters import export_c_header, export_pico8_spritesheet
 
 MIN_TERMINAL_WIDTH = 100
 MIN_TERMINAL_HEIGHT = 28
@@ -913,6 +912,7 @@ class PixelArtStudio(App):
             aspect_mode = str(self.query_one("#select-aspect", Select).value)
             palette_val = str(self.query_one("#select-palette", Select).value)
             dither_val = str(self.query_one("#select-dither", Select).value)
+            outline_val = bool(self.query_one("#switch-outline", Switch).value)
             # Resolve color enhancement preset
             enhance_key = str(self.query_one("#select-enhance", Select).value).lower()
             if enhance_key in ENHANCEMENT_PRESETS:
@@ -1286,7 +1286,7 @@ class PixelArtStudio(App):
             return
 
         in_path = Path(self.current_image_path)
-        crop_tag = f"_crop" if self.crop_enabled else ""
+        crop_tag = "_crop" if self.crop_enabled else ""
         out_name = f"{in_path.stem}{crop_tag}_{self.last_indices.shape[1]}x{self.last_indices.shape[0]}.h"
         out_path = in_path.parent / out_name
 
@@ -1302,7 +1302,7 @@ class PixelArtStudio(App):
             return
 
         in_path = Path(self.current_image_path)
-        crop_tag = f"_crop" if self.crop_enabled else ""
+        crop_tag = "_crop" if self.crop_enabled else ""
         out_name = f"{in_path.stem}{crop_tag}_pico8.txt"
         out_path = in_path.parent / out_name
 

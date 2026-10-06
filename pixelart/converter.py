@@ -1,7 +1,7 @@
 """Core pipeline for transforming high-resolution images into authentic retro pixel art."""
 
 from typing import Optional, Tuple
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image, ImageEnhance
 import numpy as np
 
 from .palettes import (

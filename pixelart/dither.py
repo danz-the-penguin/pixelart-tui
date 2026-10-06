@@ -2,7 +2,6 @@
 
 from typing import List, Tuple, Optional
 import numpy as np
-from PIL import Image
 
 RGBColor = Tuple[int, int, int]
 Palette = List[RGBColor]
