@@ -8,6 +8,7 @@ from PIL import Image, ImageDraw
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
+from textual import events
 from textual.widgets import (
     Header,
     Footer,
@@ -29,6 +30,9 @@ from rich.style import Style
 from .converter import convert_to_pixel_art, upscale_nearest, calculate_target_size
 from .palettes import PALETTES, hex_to_rgb, rgb_to_hex
 from .exporters import export_c_header, export_pico8_spritesheet, export_palette_json
+
+MIN_TERMINAL_WIDTH = 100
+MIN_TERMINAL_HEIGHT = 28
 
 
 def resolve_image_path(raw_str: str) -> Optional[Path]:
@@ -101,7 +105,7 @@ def create_viewfinder_image(
     crop_y: int,
     crop_w: int,
     crop_h: int,
-    display_w: int = 76,
+    display_w: int = 64,
 ) -> Image.Image:
     """
     Render full source image with shaded margins and a razor-sharp,
@@ -140,16 +144,12 @@ def create_viewfinder_image(
     # 5. Draw neon cyan corner brackets [ ]
     b_len = min(6, max(2, dw // 4), max(2, dh // 4))
     cyan = (0, 255, 255, 255)
-    # Top-left
     draw.line([(dx, dy), (dx + b_len, dy)], fill=cyan, width=2)
     draw.line([(dx, dy), (dx, dy + b_len)], fill=cyan, width=2)
-    # Top-right
     draw.line([(dx + dw - 1, dy), (dx + dw - 1 - b_len, dy)], fill=cyan, width=2)
     draw.line([(dx + dw - 1, dy), (dx + dw - 1, dy + b_len)], fill=cyan, width=2)
-    # Bottom-left
     draw.line([(dx, dy + dh - 1), (dx + b_len, dy + dh - 1)], fill=cyan, width=2)
     draw.line([(dx, dy + dh - 1), (dx, dy + dh - 1 - b_len)], fill=cyan, width=2)
-    # Bottom-right
     draw.line([(dx + dw - 1, dy + dh - 1), (dx + dw - 1 - b_len, dy + dh - 1)], fill=cyan, width=2)
     draw.line([(dx + dw - 1, dy + dh - 1), (dx + dw - 1, dy + dh - 1 - b_len)], fill=cyan, width=2)
 
@@ -162,19 +162,27 @@ def create_viewfinder_image(
     return display_img
 
 
-def render_image_to_rich_text(img: Image.Image, max_dim: Optional[int] = None) -> Text:
+def render_image_to_rich_text(img: Image.Image, max_dim: int = 64) -> Text:
     """
     Render a PIL image to Rich Text using Unicode half-blocks (▀ and ▄).
     Each terminal row renders 2 vertical image pixels in full 24-bit RGB.
+    Constrained to max_dim width so lines NEVER wrap in terminal columns.
     """
     work_img = img
-    if max_dim is not None and (work_img.width > max_dim or work_img.height > max_dim):
+    if work_img.width > max_dim or work_img.height > max_dim:
         w, h = calculate_target_size(work_img.width, work_img.height, max_dimension=max_dim)
-        work_img = work_img.resize((w, h), resample=Image.Resampling.BILINEAR)
+        if h % 2 != 0:
+            h += 1
+        work_img = work_img.resize((w, h), resample=Image.Resampling.NEAREST)
+    else:
+        # Ensure height is even for half-blocks
+        if work_img.height % 2 != 0:
+            w, h = work_img.width, work_img.height + 1
+            work_img = work_img.resize((w, h), resample=Image.Resampling.NEAREST)
 
     rgba = np.array(work_img.convert("RGBA"))
     h, w, _ = rgba.shape
-    text = Text()
+    text = Text(no_wrap=True)
 
     for y in range(0, h, 2):
         for x in range(w):
@@ -262,7 +270,7 @@ class CanvasWidget(Static):
         width: 100%;
         height: 1fr;
         content-align: center middle;
-        overflow: auto auto;
+        overflow: hidden hidden;
         background: #11141c;
         border: round #3b4252;
     }
@@ -279,13 +287,50 @@ class PixelArtStudio(App):
         background: #0d1117;
     }
 
+    /* Warning overlay when terminal is too small */
+    #warning-screen {
+        width: 100%;
+        height: 100%;
+        align: center middle;
+        background: #0d1117;
+        color: #e6edf3;
+        display: none;
+    }
+
+    #warning-box {
+        width: 72;
+        height: auto;
+        border: thick #f85149;
+        background: #161b22;
+        padding: 2 3;
+        align: center middle;
+        text-align: center;
+    }
+
+    .warn-title {
+        color: #f85149;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    .warn-dim {
+        color: #58a6ff;
+        text-style: bold;
+        margin: 1 0;
+    }
+
+    .warn-tip {
+        color: #8b949e;
+        margin-top: 1;
+    }
+
     #main-container {
         width: 100%;
         height: 1fr;
     }
 
     #sidebar {
-        width: 48;
+        width: 44;
         height: 100%;
         background: #161b22;
         border-right: solid #30363d;
@@ -396,24 +441,6 @@ class PixelArtStudio(App):
         padding: 0;
         height: 1fr;
     }
-
-    #split-container {
-        height: 1fr;
-        width: 100%;
-    }
-
-    .split-pane {
-        width: 1fr;
-        height: 100%;
-        padding: 0 1;
-    }
-
-    .split-title {
-        color: #58a6ff;
-        text-style: bold;
-        text-align: center;
-        margin-bottom: 0;
-    }
     """
 
     BINDINGS = [
@@ -449,6 +476,23 @@ class PixelArtStudio(App):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
+
+        # Full-screen Warning for Small Terminal
+        with Container(id="warning-screen"):
+            with Vertical(id="warning-box"):
+                yield Label("⚠️  PLEASE MAXIMIZE TERMINAL", classes="warn-title")
+                yield Label(
+                    "PixelArt Studio requires a larger terminal window\n"
+                    "for side-by-side retro rendering and image controls."
+                )
+                yield Label("Current Size: 80 x 24 | Required: 100 x 28", id="warn-size-lbl", classes="warn-dim")
+                yield Label(
+                    "💡 Please maximize or expand your terminal window\n"
+                    "(Press ⌃⌘F on macOS or drag the window edge to full screen)",
+                    classes="warn-tip"
+                )
+
+        # Main Studio Layout
         with Horizontal(id="main-container"):
             # Left Control Sidebar
             with VerticalScroll(id="sidebar"):
@@ -628,28 +672,44 @@ class PixelArtStudio(App):
                 yield Button("🕹️ Export C Header (.h)", id="btn-export-c", variant="default", classes="action-btn")
                 yield Button("👾 Export PICO-8 String", id="btn-export-pico8", variant="default", classes="action-btn")
 
-            # Right Preview Area with Tabs including Side-by-Side Split
+            # Right Preview Area with Stable Tabs
             with Vertical(id="preview-area"):
                 yield Static("No Image Loaded", id="info-bar")
                 with TabbedContent(id="preview-tabs"):
-                    with TabPane("👾 Pixel Art Sprite", id="tab-pixel"):
+                    with TabPane("👾 Converted Pixel Art", id="tab-pixel"):
                         yield CanvasWidget(id="canvas-pixel")
-                    with TabPane("✂️ Live Viewfinder", id="tab-source"):
+                    with TabPane("✂️ Live Crop Viewfinder", id="tab-source"):
                         yield CanvasWidget(id="canvas-source")
-                    with TabPane("🔲 Side-by-Side", id="tab-split"):
-                        with Horizontal(id="split-container"):
-                            with Vertical(classes="split-pane"):
-                                yield Label("✂️ Live Viewfinder (Framing)", classes="split-title")
-                                yield CanvasWidget(id="canvas-split-source")
-                            with Vertical(classes="split-pane"):
-                                yield Label("👾 Pixel Art Sprite (Result)", classes="split-title")
-                                yield CanvasWidget(id="canvas-split-pixel")
                 yield Static("Ready", id="status-bar")
 
         yield Footer()
 
+    def check_terminal_size(self, width: int, height: int) -> None:
+        """Check terminal dimensions and toggle warning screen."""
+        too_small = width < MIN_TERMINAL_WIDTH or height < MIN_TERMINAL_HEIGHT
+        warn_screen = self.query_one("#warning-screen", Container)
+        main_ui = self.query_one("#main-container", Horizontal)
+
+        warn_screen.display = too_small
+        main_ui.display = not too_small
+
+        if too_small:
+            warn_lbl = self.query_one("#warn-size-lbl", Label)
+            warn_lbl.update(
+                f"Current Size: {width} x {height} | Required Minimum: {MIN_TERMINAL_WIDTH} x {MIN_TERMINAL_HEIGHT}"
+            )
+        else:
+            if self.current_source_img:
+                self.reprocess_pixel_art()
+
+    def on_resize(self, event: events.Resize) -> None:
+        """Handle terminal window resize dynamically."""
+        self.check_terminal_size(event.size.width, event.size.height)
+
     def on_mount(self) -> None:
-        """Load initial image upon launch."""
+        """Load initial image upon launch and verify terminal size."""
+        self.check_terminal_size(self.size.width, self.size.height)
+
         initial_path = self.initial_image
         if not initial_path:
             if Path("rome.png").exists():
@@ -797,26 +857,21 @@ class PixelArtStudio(App):
             self.last_indices = indices
             self.last_palette = palette
 
-            # 1. Render converted pixel art
-            rich_pixel = render_image_to_rich_text(sprite)
+            # 1. Render converted pixel art cleanly constrained to canvas display
+            rich_pixel = render_image_to_rich_text(sprite, max_dim=68)
             self.query_one("#canvas-pixel", CanvasWidget).update(rich_pixel)
 
-            # 2. Render sharp camera viewfinder
+            # 2. Render razor-sharp camera viewfinder
             viewfinder_img = create_viewfinder_image(
                 self.current_source_img,
                 self.crop_x if self.crop_enabled else 0,
                 self.crop_y if self.crop_enabled else 0,
                 self.crop_w if self.crop_enabled else orig_w,
                 self.crop_h if self.crop_enabled else orig_h,
-                display_w=76,
+                display_w=68,
             )
-            rich_viewfinder = render_image_to_rich_text(viewfinder_img)
+            rich_viewfinder = render_image_to_rich_text(viewfinder_img, max_dim=68)
             self.query_one("#canvas-source", CanvasWidget).update(rich_viewfinder)
-
-            # 3. Render side-by-side split canvases
-            rich_split_source = render_image_to_rich_text(viewfinder_img, max_dim=54)
-            self.query_one("#canvas-split-source", CanvasWidget).update(rich_split_source)
-            self.query_one("#canvas-split-pixel", CanvasWidget).update(rich_pixel)
 
             # Update info bar
             crop_str = f"Crop: {self.crop_w}x{self.crop_h}" if self.crop_enabled else "Full Size"
