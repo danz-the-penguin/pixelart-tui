@@ -1,0 +1,28 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+*.egg
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# OS / Editor files
+.DS_Store
+.idea/
+.vscode/
+
+# Test output exports
+output_*
+rome_*
+sample_input_*
+*.h
+*.txt
+*.json
+!pyproject.toml
+!uv.lock
