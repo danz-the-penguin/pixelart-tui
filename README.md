@@ -19,7 +19,9 @@ uv run python main.py --tui
 ```
 
 ### ✨ TUI Features
-- **Live Terminal Canvas**: True-color ANSI rendering using Unicode half-blocks (`▀` and `▄`) right inside your terminal.
+- **Live Terminal Canvas & Dual Tabs**: True-color ANSI rendering using Unicode half-blocks (`▀` and `▄`) with tabs to toggle between **👾 Pixel Art** and **✂️ Cropped Source**.
+- **Interactive Cropping & Panning D-Pad**: Move and pan the crop window across high-res art using `▲`, `▼`, `◄`, `►` buttons or Arrow Keys (`↑`, `↓`, `←`, `→`).
+- **Custom Crop Dimensions**: Type your exact wanted Width & Height, or use quick presets (`1:1 Square`, `Center`, `Reset Full`).
 - **Instant Previews**: Adjust resolution, switch retro palettes, toggle outlines, and see results update in real-time.
 - **One-Click Game Exports**: Save upscaled preview PNGs, native 1x sprites, C headers (`.h`), and PICO-8 hex sprites with a single click.
 
@@ -109,6 +111,7 @@ uv run python main.py --list-palettes
 | Export C Header | `--export-c` | Outputs `.h` header with palette and index arrays | `False` |
 | Export PICO-8 | `--export-pico8` | Outputs hex text ready for PICO-8 cartridge | `False` |
 | Export Palette | `--export-palette` | Outputs palette as JSON file | `False` |
+| Sub-region Crop | `--crop X Y W H` | Crops a sub-region from the source before conversion | None |
 | Interactive TUI | `--tui` | Launches interactive Textual TUI studio | `False` |
 
 ---

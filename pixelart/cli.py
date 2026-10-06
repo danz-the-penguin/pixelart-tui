@@ -162,6 +162,13 @@ Examples:
         help="Export PICO-8 sprite string (.txt) for fantasy console cartridges",
     )
     parser.add_argument(
+        "--crop",
+        nargs=4,
+        type=int,
+        metavar=("X", "Y", "WIDTH", "HEIGHT"),
+        help="Crop a sub-region from the source image before conversion",
+    )
+    parser.add_argument(
         "--export-palette",
         action="store_true",
         help="Export JSON palette file with hex and RGB values",
@@ -246,6 +253,7 @@ def main(argv=None):
             sharpness=args.sharpness,
             add_outline=args.outline,
             outline_color=outline_rgb,
+            crop_box=tuple(args.crop) if args.crop else None,
         )
     except Exception as e:
         print(f"Error during pixel art conversion: {e}", file=sys.stderr)

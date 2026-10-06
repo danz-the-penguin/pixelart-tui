@@ -131,13 +131,20 @@ def convert_to_pixel_art(
     add_outline: bool = False,
     outline_color: RGBColor = (0, 0, 0),
     perceptual: bool = True,
+    crop_box: Optional[Tuple[int, int, int, int]] = None,
 ) -> Tuple[Image.Image, np.ndarray, Palette]:
     """
     Full pipeline to turn an image into authentic retro pixel art.
+    crop_box: Optional (x, y, width, height) to crop region of interest.
     
     Returns:
         (pixel_art_image, palette_indices, final_palette)
     """
+    # 0. Apply crop if requested (x, y, width, height)
+    if crop_box is not None:
+        cx, cy, cw, ch = crop_box
+        img = img.crop((cx, cy, cx + cw, cy + ch))
+
     # 1. Determine target dimensions
     orig_w, orig_h = img.size
     w, h = calculate_target_size(
