@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual import events
+from textual import events, work
 from textual.widgets import (
     Header,
     Footer,
@@ -352,7 +352,18 @@ class PixelArtStudio(App):
 
     .field-label {
         color: #8b949e;
-        margin-top: 1;
+        margin-top: 0;
+        margin-bottom: 0;
+    }
+
+    Rule {
+        margin: 0;
+    }
+
+    .switch-row {
+        height: auto;
+        margin-top: 0;
+        align: left middle;
     }
 
     .action-btn {
@@ -387,10 +398,41 @@ class PixelArtStudio(App):
 
     .button-row Button {
         width: 1fr;
+        min-width: 0;
         margin-right: 1;
     }
 
     .button-row Button:last-of-type {
+        margin-right: 0;
+    }
+
+    .dim-row {
+        height: 3;
+        margin-top: 0;
+        align: left middle;
+    }
+
+    .dim-row .dim-lbl {
+        width: 3;
+        content-align: left middle;
+        text-style: bold;
+        color: #58a6ff;
+    }
+
+    .dim-row Input {
+        width: 1fr;
+        min-width: 0;
+        margin-right: 1;
+    }
+
+    .dim-row Button {
+        width: 6;
+        min-width: 0;
+        margin-right: 1;
+        padding: 0;
+    }
+
+    .dim-row Button:last-of-type {
         margin-right: 0;
     }
 
@@ -401,6 +443,7 @@ class PixelArtStudio(App):
 
     .crop-row Input {
         width: 1fr;
+        min-width: 0;
         margin-right: 1;
     }
 
@@ -469,10 +512,12 @@ class PixelArtStudio(App):
     crop_h: int = 0
     crop_step: int = 10
     _updating_inputs: bool = False
+    _initialized: bool = False
 
     def __init__(self, initial_image: Optional[str] = None):
         super().__init__()
         self.initial_image = initial_image
+        self._initialized = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -528,16 +573,18 @@ class PixelArtStudio(App):
 
                 yield Label("Original: 0 x 0 px", id="label-crop-info", classes="field-label")
 
-                yield Label("Live Dimensions (W x H):", classes="field-label")
-                with Horizontal(classes="crop-row"):
+                yield Label("Crop Dimensions:", classes="field-label")
+                with Horizontal(classes="dim-row"):
+                    yield Label("W:", classes="dim-lbl")
                     yield Input(placeholder="Width", id="input-crop-w")
-                    yield Input(placeholder="Height", id="input-crop-h")
+                    yield Button("−", id="btn-shrink-w")
+                    yield Button("+", id="btn-grow-w")
 
-                with Horizontal(classes="button-row"):
-                    yield Button("- W", id="btn-shrink-w")
-                    yield Button("+ W", id="btn-grow-w")
-                    yield Button("- H", id="btn-shrink-h")
-                    yield Button("+ H", id="btn-grow-h")
+                with Horizontal(classes="dim-row"):
+                    yield Label("H:", classes="dim-lbl")
+                    yield Input(placeholder="Height", id="input-crop-h")
+                    yield Button("−", id="btn-shrink-h")
+                    yield Button("+", id="btn-grow-h")
 
                 yield Label("Offset Position (X, Y):", classes="field-label")
                 with Horizontal(classes="crop-row"):
@@ -699,7 +746,7 @@ class PixelArtStudio(App):
                 f"Current Size: {width} x {height} | Required Minimum: {MIN_TERMINAL_WIDTH} x {MIN_TERMINAL_HEIGHT}"
             )
         else:
-            if self.current_source_img:
+            if self._initialized and self.current_source_img:
                 self.reprocess_pixel_art()
 
     def on_resize(self, event: events.Resize) -> None:
@@ -722,6 +769,7 @@ class PixelArtStudio(App):
                     initial_path = local_images[0][1]
         if initial_path:
             self.load_image(str(initial_path))
+        self._initialized = True
 
     def set_status(self, message: str, is_error: bool = False) -> None:
         """Update bottom status banner and trigger visual notification toast."""
@@ -795,28 +843,33 @@ class PixelArtStudio(App):
         pct = int((self.crop_w * self.crop_h) / (orig_w * orig_h) * 100) if (orig_w * orig_h) > 0 else 100
         info_lbl.update(f"Orig: {orig_w}x{orig_h} | Crop: {self.crop_w}x{self.crop_h} ({pct}%)")
 
+    @work(exclusive=True, thread=True)
     def reprocess_pixel_art(self) -> None:
-        """Re-run conversion pipeline and update both pixel art and crop source canvases."""
+        """Re-run conversion pipeline in background worker without blocking UI event loop."""
         if self.current_source_img is None:
             return
 
         try:
             orig_w, orig_h = self.current_source_img.size
 
-            # Determine crop box
-            if self.crop_enabled:
-                crop_box = (self.crop_x, self.crop_y, self.crop_w, self.crop_h)
+            # Capture crop coordinates
+            crop_enabled = self.crop_enabled
+            crop_x, crop_y = self.crop_x, self.crop_y
+            crop_w, crop_h = self.crop_w, self.crop_h
+
+            if crop_enabled:
+                crop_box = (crop_x, crop_y, crop_w, crop_h)
                 source_to_render = self.current_source_img.crop((
-                    self.crop_x,
-                    self.crop_y,
-                    self.crop_x + self.crop_w,
-                    self.crop_y + self.crop_h
+                    crop_x,
+                    crop_y,
+                    crop_x + crop_w,
+                    crop_y + crop_h
                 ))
             else:
                 crop_box = None
                 source_to_render = self.current_source_img
 
-            # Query control values
+            # Query control values safely
             res_val = str(self.query_one("#select-resolution", Select).value)
             aspect_mode = str(self.query_one("#select-aspect", Select).value)
             palette_val = str(self.query_one("#select-palette", Select).value)
@@ -853,35 +906,56 @@ class PixelArtStudio(App):
                 crop_box=crop_box,
             )
 
-            self.processed_sprite = sprite
-            self.last_indices = indices
-            self.last_palette = palette
-
             # 1. Render converted pixel art cleanly constrained to canvas display
             rich_pixel = render_image_to_rich_text(sprite, max_dim=68)
-            self.query_one("#canvas-pixel", CanvasWidget).update(rich_pixel)
 
             # 2. Render razor-sharp camera viewfinder
             viewfinder_img = create_viewfinder_image(
                 self.current_source_img,
-                self.crop_x if self.crop_enabled else 0,
-                self.crop_y if self.crop_enabled else 0,
-                self.crop_w if self.crop_enabled else orig_w,
-                self.crop_h if self.crop_enabled else orig_h,
+                crop_x if crop_enabled else 0,
+                crop_y if crop_enabled else 0,
+                crop_w if crop_enabled else orig_w,
+                crop_h if crop_enabled else orig_h,
                 display_w=68,
             )
             rich_viewfinder = render_image_to_rich_text(viewfinder_img, max_dim=68)
-            self.query_one("#canvas-source", CanvasWidget).update(rich_viewfinder)
 
-            # Update info bar
-            crop_str = f"Crop: {self.crop_w}x{self.crop_h}" if self.crop_enabled else "Full Size"
-            info_bar = self.query_one("#info-bar", Static)
-            info_bar.update(
+            # Update info bar text
+            crop_str = f"Crop: {crop_w}x{crop_h}" if crop_enabled else "Full Size"
+            info_text = (
                 f"Sprite: {sprite.width}x{sprite.height} | {crop_str} | "
                 f"Palette: {palette_val} ({len(palette)}c) | Dither: {dither_val}"
             )
+
+            self.call_from_thread(
+                self._apply_reprocessed_result,
+                sprite,
+                indices,
+                palette,
+                rich_pixel,
+                rich_viewfinder,
+                info_text,
+            )
         except Exception as e:
-            self.set_status(f"Processing error: {e}", is_error=True)
+            self.call_from_thread(self.set_status, f"Processing error: {e}", True)
+
+    def _apply_reprocessed_result(
+        self,
+        sprite: Image.Image,
+        indices: np.ndarray,
+        palette: list,
+        rich_pixel: Text,
+        rich_viewfinder: Text,
+        info_text: str,
+    ) -> None:
+        """Apply rendered sprites to UI widgets on main thread."""
+        self.processed_sprite = sprite
+        self.last_indices = indices
+        self.last_palette = palette
+
+        self.query_one("#canvas-pixel", CanvasWidget).update(rich_pixel)
+        self.query_one("#canvas-source", CanvasWidget).update(rich_viewfinder)
+        self.query_one("#info-bar", Static).update(info_text)
 
     # Crop manipulation actions
     def action_crop_up(self) -> None:
@@ -1053,6 +1127,8 @@ class PixelArtStudio(App):
             self.action_export_pico8()
 
     def on_select_changed(self, event: Select.Changed) -> None:
+        if not self._initialized:
+            return
         if event.select.id == "select-quick-image":
             if not event.select.is_blank() and event.value:
                 val_str = str(event.value)
@@ -1065,6 +1141,8 @@ class PixelArtStudio(App):
             self.reprocess_pixel_art()
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
+        if not self._initialized:
+            return
         if event.switch.id == "switch-crop":
             self.crop_enabled = bool(event.value)
             self.reprocess_pixel_art()
@@ -1103,6 +1181,11 @@ class PixelArtStudio(App):
             return
 
         scale = int(self.query_one("#select-scale", Select).value)
+        # Protect against gigapixel images when exporting large sprites
+        max_dim = max(self.processed_sprite.width, self.processed_sprite.height)
+        if max_dim * scale > 4096:
+            scale = max(1, 4096 // max_dim)
+
         in_path = Path(self.current_image_path)
         pal_name = str(self.query_one("#select-palette", Select).value)
         crop_tag = f"_crop_{self.crop_w}x{self.crop_h}" if self.crop_enabled else ""

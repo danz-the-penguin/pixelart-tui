@@ -46,32 +46,33 @@ def find_closest_palette_indices(
     H, W, _ = pixels.shape
     K = palette_arr.shape[0]
 
-    # Vectorized distance computation
-    # diff: (H, W, K, 3)
-    diff = pixels[:, :, np.newaxis, :] - palette_arr[np.newaxis, np.newaxis, :, :]
+    # Low-memory, cache-friendly iteration over K palette colors
+    best_indices = np.zeros((H, W), dtype=np.uint8)
+    min_dist = np.full((H, W), np.inf, dtype=np.float32)
 
-    if perceptual:
-        # Redmean perceptual color distance approximation:
-        # weights R, G, B according to human eye sensitivity
-        # r_bar = (r1 + r2) / 2
-        r1 = pixels[:, :, np.newaxis, 0]
-        r2 = palette_arr[np.newaxis, np.newaxis, :, 0]
-        r_bar = 0.5 * (r1 + r2)
+    p_r = pixels[:, :, 0]
+    p_g = pixels[:, :, 1]
+    p_b = pixels[:, :, 2]
 
-        weight_r = 2.0 + (r_bar / 256.0)
-        weight_g = 4.0
-        weight_b = 2.0 + ((255.0 - r_bar) / 256.0)
+    for k in range(K):
+        c = palette_arr[k]
+        dr = p_r - c[0]
+        dg = p_g - c[1]
+        db = p_b - c[2]
 
-        dist_sq = (
-            weight_r * (diff[:, :, :, 0] ** 2)
-            + weight_g * (diff[:, :, :, 1] ** 2)
-            + weight_b * (diff[:, :, :, 2] ** 2)
-        )
-    else:
-        # Standard Euclidean RGB distance
-        dist_sq = np.sum(diff ** 2, axis=-1)
+        if perceptual:
+            r_bar = 0.5 * (p_r + c[0])
+            wr = 2.0 + (r_bar / 256.0)
+            wb = 2.0 + ((255.0 - r_bar) / 256.0)
+            d = wr * (dr * dr) + 4.0 * (dg * dg) + wb * (db * db)
+        else:
+            d = (dr * dr) + (dg * dg) + (db * db)
 
-    return np.argmin(dist_sq, axis=-1).astype(np.uint8)
+        mask = d < min_dist
+        min_dist[mask] = d[mask]
+        best_indices[mask] = k
+
+    return best_indices
 
 
 def quantize_none(
