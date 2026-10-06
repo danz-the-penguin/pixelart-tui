@@ -124,6 +124,32 @@ PALETTES: Dict[str, Palette] = {
         (0, 0, 0),
         (255, 255, 255),
     ],
+    # Super Nintendo (SNES - Curated 16-color authentic sprite palette)
+    "snes": [
+        (0, 0, 0),        # 0 Black
+        (255, 255, 255),  # 1 White
+        (156, 156, 156),  # 2 Light Grey
+        (74, 74, 74),     # 3 Dark Grey
+        (222, 41, 41),    # 4 Red
+        (132, 16, 16),    # 5 Dark Red
+        (247, 148, 41),   # 6 Orange
+        (247, 222, 41),   # 7 Yellow
+        (58, 181, 58),    # 8 Green
+        (25, 107, 25),    # 9 Dark Green
+        (41, 148, 222),   # 10 Blue
+        (16, 49, 148),    # 11 Navy Blue
+        (173, 74, 222),   # 12 Purple
+        (247, 148, 189),  # 13 Pink / Skin light
+        (173, 90, 41),    # 14 Brown
+        (99, 49, 16),     # 15 Dark Brown
+    ],
+    # Nintendo Game Boy Advance (GBA - 16-color vibrant sprite palette)
+    "gba": [
+        (8, 8, 8),        (248, 248, 248),  (160, 160, 160),  (80, 80, 80),
+        (232, 56, 56),    (144, 24, 24),    (248, 152, 48),   (248, 224, 56),
+        (56, 192, 56),    (24, 112, 24),    (56, 152, 232),   (24, 56, 152),
+        (184, 80, 232),   (248, 160, 192),  (184, 104, 48),   (112, 56, 24),
+    ],
     # Cyberpunk / Neon Synthwave
     "cyberpunk": [
         (13, 2, 33),      # Void Navy
@@ -176,7 +202,15 @@ def parse_custom_palette(spec: str) -> Palette:
     return colors
 
 
-def extract_adaptive_palette(img: Image.Image, num_colors: int = 16) -> Palette:
+def snap_color_snes_15bit(rgb: RGBColor) -> RGBColor:
+    """Snap an 8-bit RGB color to the SNES 15-bit (5-bit per channel) hardware color grid."""
+    r = round(round(rgb[0] * 31 / 255) * 255 / 31)
+    g = round(round(rgb[1] * 31 / 255) * 255 / 31)
+    b = round(round(rgb[2] * 31 / 255) * 255 / 31)
+    return (int(r), int(g), int(b))
+
+
+def extract_adaptive_palette(img: Image.Image, num_colors: int = 16, snap_snes: bool = False) -> Palette:
     """
     Extract an adaptive N-color palette from an image using Median Cut.
     Ideal for SNES / GBA sprites where each sprite has a custom 16-color palette.
@@ -188,6 +222,8 @@ def extract_adaptive_palette(img: Image.Image, num_colors: int = 16) -> Palette:
         (pal_data[i], pal_data[i + 1], pal_data[i + 2])
         for i in range(0, len(pal_data), 3)
     ]
+    if snap_snes:
+        palette = [snap_color_snes_15bit(c) for c in palette]
     return palette
 
 

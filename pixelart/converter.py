@@ -189,6 +189,8 @@ def convert_to_pixel_art(
     palette_lower = palette_name_or_spec.lower().strip()
     if palette_lower in ("adaptive", "custom-k", "auto"):
         palette = extract_adaptive_palette(low_res_img, num_colors=num_adaptive_colors)
+    elif palette_lower in ("snes-adaptive", "snes-15bit"):
+        palette = extract_adaptive_palette(low_res_img, num_colors=16, snap_snes=True)
     else:
         preset = get_palette_by_name(palette_lower)
         if preset is not None:
