@@ -101,45 +101,71 @@ def create_viewfinder_image(
     crop_y: int,
     crop_w: int,
     crop_h: int,
-    max_dim: int = 96,
+    display_w: int = 76,
 ) -> Image.Image:
     """
-    Render full source image with shaded margins and a bright glowing
-    camera-viewfinder border showing the active crop region.
+    Render full source image with shaded margins and a razor-sharp,
+    pixel-perfect glowing camera viewfinder border and corner brackets.
+    Drawn directly on display resolution to prevent blurry downsample artifacts.
     """
-    rgba = source_img.convert("RGBA")
-    w, h = rgba.size
+    orig_w, orig_h = source_img.size
 
-    cx = max(0, min(crop_x, w - 1))
-    cy = max(0, min(crop_y, h - 1))
-    cw = max(1, min(crop_w, w - cx))
-    ch = max(1, min(crop_h, h - cy))
+    # 1. Scale down to display preview size maintaining aspect ratio
+    tw, th = calculate_target_size(orig_w, orig_h, max_dimension=display_w)
+    if th % 2 != 0:
+        th += 1
+    display_img = source_img.resize((tw, th), resample=Image.Resampling.BILINEAR).convert("RGBA")
 
-    # Dim the area outside the crop box
-    viewfinder = rgba.copy()
-    overlay = Image.new("RGBA", (w, h), (0, 0, 0, 165))
-    mask = Image.new("L", (w, h), 255)
+    # 2. Map crop coordinates directly to display pixels
+    scale_x = tw / orig_w
+    scale_y = th / orig_h
+
+    dx = max(0, min(int(round(crop_x * scale_x)), tw - 1))
+    dy = max(0, min(int(round(crop_y * scale_y)), th - 1))
+    dw = max(3, min(int(round(crop_w * scale_x)), tw - dx))
+    dh = max(3, min(int(round(crop_h * scale_y)), th - dy))
+
+    # 3. Dim the area outside the crop box
+    overlay = Image.new("RGBA", (tw, th), (0, 0, 0, 160))
+    mask = Image.new("L", (tw, th), 255)
     mask_draw = ImageDraw.Draw(mask)
-    mask_draw.rectangle([cx, cy, cx + cw, cy + ch], fill=0)
-    viewfinder.paste(overlay, (0, 0), mask)
+    mask_draw.rectangle([dx, dy, dx + dw - 1, dy + dh - 1], fill=0)
+    display_img.paste(overlay, (0, 0), mask)
 
-    # Draw glowing neon cyan border
-    draw = ImageDraw.Draw(viewfinder)
-    border_w = max(1, min(3, w // 70))
-    draw.rectangle([cx, cy, cx + cw, cy + ch], outline=(0, 255, 255, 255), width=border_w)
+    # 4. Draw crisp high-contrast border (black drop shadow + bright neon yellow line)
+    draw = ImageDraw.Draw(display_img)
+    draw.rectangle([dx, dy, dx + dw - 1, dy + dh - 1], outline=(0, 0, 0, 255), width=2)
+    draw.rectangle([dx + 1, dy + 1, dx + dw - 2, dy + dh - 2], outline=(255, 235, 59, 255), width=1)
 
-    if max_dim and (w > max_dim or h > max_dim):
-        tw, th = calculate_target_size(w, h, max_dimension=max_dim)
-        viewfinder = viewfinder.resize((tw, th), resample=Image.Resampling.BILINEAR)
+    # 5. Draw neon cyan corner brackets [ ]
+    b_len = min(6, max(2, dw // 4), max(2, dh // 4))
+    cyan = (0, 255, 255, 255)
+    # Top-left
+    draw.line([(dx, dy), (dx + b_len, dy)], fill=cyan, width=2)
+    draw.line([(dx, dy), (dx, dy + b_len)], fill=cyan, width=2)
+    # Top-right
+    draw.line([(dx + dw - 1, dy), (dx + dw - 1 - b_len, dy)], fill=cyan, width=2)
+    draw.line([(dx + dw - 1, dy), (dx + dw - 1, dy + b_len)], fill=cyan, width=2)
+    # Bottom-left
+    draw.line([(dx, dy + dh - 1), (dx + b_len, dy + dh - 1)], fill=cyan, width=2)
+    draw.line([(dx, dy + dh - 1), (dx, dy + dh - 1 - b_len)], fill=cyan, width=2)
+    # Bottom-right
+    draw.line([(dx + dw - 1, dy + dh - 1), (dx + dw - 1 - b_len, dy + dh - 1)], fill=cyan, width=2)
+    draw.line([(dx + dw - 1, dy + dh - 1), (dx + dw - 1, dy + dh - 1 - b_len)], fill=cyan, width=2)
 
-    return viewfinder
+    # 6. Center crosshair
+    mid_x = dx + dw // 2
+    mid_y = dy + dh // 2
+    draw.line([(mid_x - 2, mid_y), (mid_x + 2, mid_y)], fill=cyan, width=1)
+    draw.line([(mid_x, mid_y - 2), (mid_x, mid_y + 2)], fill=cyan, width=1)
+
+    return display_img
 
 
 def render_image_to_rich_text(img: Image.Image, max_dim: Optional[int] = None) -> Text:
     """
     Render a PIL image to Rich Text using Unicode half-blocks (▀ and ▄).
     Each terminal row renders 2 vertical image pixels in full 24-bit RGB.
-    Optional max_dim scales down large source images for terminal preview.
     """
     work_img = img
     if max_dim is not None and (work_img.width > max_dim or work_img.height > max_dim):
@@ -370,6 +396,24 @@ class PixelArtStudio(App):
         padding: 0;
         height: 1fr;
     }
+
+    #split-container {
+        height: 1fr;
+        width: 100%;
+    }
+
+    .split-pane {
+        width: 1fr;
+        height: 100%;
+        padding: 0 1;
+    }
+
+    .split-title {
+        color: #58a6ff;
+        text-style: bold;
+        text-align: center;
+        margin-bottom: 0;
+    }
     """
 
     BINDINGS = [
@@ -492,15 +536,17 @@ class PixelArtStudio(App):
                 yield Label("Target Resolution:", classes="field-label")
                 yield Select(
                     [
-                        ("16 px (Tiny Icon)", "16"),
-                        ("24 px (Classic RPG)", "24"),
-                        ("32 px (Standard Sprite)", "32"),
-                        ("48 px (Detailed Character)", "48"),
-                        ("64 px (Portrait / Boss)", "64"),
+                        ("Original / Crop Size (100% Native 1:1)", "original"),
+                        ("Half Size (50%)", "half"),
+                        ("128 px (High-Res Retro)", "128"),
                         ("96 px (Large Scene)", "96"),
-                        ("128 px (High Res Retro)", "128"),
+                        ("64 px (Portrait / Boss)", "64"),
+                        ("48 px (Detailed Character)", "48"),
+                        ("32 px (Standard Sprite)", "32"),
+                        ("24 px (Classic RPG)", "24"),
+                        ("16 px (Tiny Icon)", "16"),
                     ],
-                    value="32",
+                    value="original",
                     id="select-resolution",
                     allow_blank=False,
                 )
@@ -518,9 +564,10 @@ class PixelArtStudio(App):
 
                 yield Label("Hardware Palette:", classes="field-label")
                 palette_options = [
-                    ("SNES / Super Nintendo (16 Colors)", "snes"),
+                    ("Adaptive 16 Colors (SNES / GBA Best)", "adaptive"),
+                    ("SNES Curated (16 Classic Colors)", "snes"),
                     ("SNES Adaptive (15-bit Hardware Snap)", "snes-adaptive"),
-                    ("GBA / Game Boy Advance (16 Colors)", "gba"),
+                    ("GBA Curated (16 Colors)", "gba"),
                     ("NES (54 Colors)", "nes"),
                     ("Game Boy DMG (4 Greens)", "gameboy"),
                     ("Game Boy Pocket (4 Greys)", "gameboy-pocket"),
@@ -531,9 +578,8 @@ class PixelArtStudio(App):
                     ("ZX Spectrum (15 Colors)", "zx-spectrum"),
                     ("1-Bit Monochrome (B&W)", "1bit"),
                     ("Cyberpunk Synthwave", "cyberpunk"),
-                    ("Adaptive (Custom N-Colors)", "adaptive"),
                 ]
-                yield Select(palette_options, value="snes", id="select-palette", allow_blank=False)
+                yield Select(palette_options, value="adaptive", id="select-palette", allow_blank=False)
 
                 yield Label("Dithering Method:", classes="field-label")
                 dither_options = [
@@ -582,14 +628,22 @@ class PixelArtStudio(App):
                 yield Button("🕹️ Export C Header (.h)", id="btn-export-c", variant="default", classes="action-btn")
                 yield Button("👾 Export PICO-8 String", id="btn-export-pico8", variant="default", classes="action-btn")
 
-            # Right Preview Area with Tabs
+            # Right Preview Area with Tabs including Side-by-Side Split
             with Vertical(id="preview-area"):
                 yield Static("No Image Loaded", id="info-bar")
                 with TabbedContent(id="preview-tabs"):
-                    with TabPane("👾 Pixel Art", id="tab-pixel"):
+                    with TabPane("👾 Pixel Art Sprite", id="tab-pixel"):
                         yield CanvasWidget(id="canvas-pixel")
                     with TabPane("✂️ Live Viewfinder", id="tab-source"):
                         yield CanvasWidget(id="canvas-source")
+                    with TabPane("🔲 Side-by-Side", id="tab-split"):
+                        with Horizontal(id="split-container"):
+                            with Vertical(classes="split-pane"):
+                                yield Label("✂️ Live Viewfinder (Framing)", classes="split-title")
+                                yield CanvasWidget(id="canvas-split-source")
+                            with Vertical(classes="split-pane"):
+                                yield Label("👾 Pixel Art Sprite (Result)", classes="split-title")
+                                yield CanvasWidget(id="canvas-split-pixel")
                 yield Static("Ready", id="status-bar")
 
         yield Footer()
@@ -703,23 +757,29 @@ class PixelArtStudio(App):
                 source_to_render = self.current_source_img
 
             # Query control values
-            res_val = int(self.query_one("#select-resolution", Select).value)
+            res_val = str(self.query_one("#select-resolution", Select).value)
             aspect_mode = str(self.query_one("#select-aspect", Select).value)
             palette_val = str(self.query_one("#select-palette", Select).value)
             dither_val = str(self.query_one("#select-dither", Select).value)
             outline_val = bool(self.query_one("#switch-outline", Switch).value)
             enhance_val = float(self.query_one("#select-enhance", Select).value)
 
-            # Aspect ratio calculation based on cropped source
+            # Resolution calculation
             effective_w, effective_h = source_to_render.size
-            if aspect_mode == "fit":
-                target_w, target_h = calculate_target_size(
-                    effective_w,
-                    effective_h,
-                    max_dimension=res_val,
-                )
+            if res_val == "original":
+                target_w, target_h = effective_w, effective_h
+            elif res_val == "half":
+                target_w, target_h = max(1, effective_w // 2), max(1, effective_h // 2)
             else:
-                target_w, target_h = res_val, res_val
+                target_dim = int(res_val)
+                if aspect_mode == "fit":
+                    target_w, target_h = calculate_target_size(
+                        effective_w,
+                        effective_h,
+                        max_dimension=target_dim,
+                    )
+                else:
+                    target_w, target_h = target_dim, target_dim
 
             sprite, indices, palette = convert_to_pixel_art(
                 self.current_source_img,
@@ -741,24 +801,25 @@ class PixelArtStudio(App):
             rich_pixel = render_image_to_rich_text(sprite)
             self.query_one("#canvas-pixel", CanvasWidget).update(rich_pixel)
 
-            # 2. Render live camera viewfinder with glowing crop frame
-            if self.crop_enabled:
-                viewfinder_img = create_viewfinder_image(
-                    self.current_source_img,
-                    self.crop_x,
-                    self.crop_y,
-                    self.crop_w,
-                    self.crop_h,
-                    max_dim=96,
-                )
-            else:
-                viewfinder_img = self.current_source_img
+            # 2. Render sharp camera viewfinder
+            viewfinder_img = create_viewfinder_image(
+                self.current_source_img,
+                self.crop_x if self.crop_enabled else 0,
+                self.crop_y if self.crop_enabled else 0,
+                self.crop_w if self.crop_enabled else orig_w,
+                self.crop_h if self.crop_enabled else orig_h,
+                display_w=76,
+            )
+            rich_viewfinder = render_image_to_rich_text(viewfinder_img)
+            self.query_one("#canvas-source", CanvasWidget).update(rich_viewfinder)
 
-            rich_source = render_image_to_rich_text(viewfinder_img, max_dim=96)
-            self.query_one("#canvas-source", CanvasWidget).update(rich_source)
+            # 3. Render side-by-side split canvases
+            rich_split_source = render_image_to_rich_text(viewfinder_img, max_dim=54)
+            self.query_one("#canvas-split-source", CanvasWidget).update(rich_split_source)
+            self.query_one("#canvas-split-pixel", CanvasWidget).update(rich_pixel)
 
             # Update info bar
-            crop_str = f"Crop: {self.crop_w}x{self.crop_h} @ ({self.crop_x},{self.crop_y})" if self.crop_enabled else "Crop: Full"
+            crop_str = f"Crop: {self.crop_w}x{self.crop_h}" if self.crop_enabled else "Full Size"
             info_bar = self.query_one("#info-bar", Static)
             info_bar.update(
                 f"Sprite: {sprite.width}x{sprite.height} | {crop_str} | "
@@ -816,7 +877,6 @@ class PixelArtStudio(App):
         new_w = max(4, min(self.crop_w + delta_w, orig_w))
         new_h = max(4, min(self.crop_h + delta_h, orig_h))
 
-        # Adjust position if resized outside boundary
         if self.crop_x + new_w > orig_w:
             self.crop_x = max(0, orig_w - new_w)
         if self.crop_y + new_h > orig_h:
@@ -957,9 +1017,9 @@ class PixelArtStudio(App):
             self.reprocess_pixel_art()
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        """Live updates as the user types crop dimensions or offsets."""
+        """Live updates as user types crop dimensions or offsets."""
         if event.input.id in ("input-crop-w", "input-crop-h", "input-crop-x", "input-crop-y"):
-            if not self._updating_inputs:
+            if event.input.has_focus:
                 self.crop_enabled = True
                 self.query_one("#switch-crop", Switch).value = True
                 self.apply_manual_crop_inputs()
