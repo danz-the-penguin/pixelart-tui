@@ -3,12 +3,13 @@
 import argparse
 import sys
 from pathlib import Path
+
 from PIL import Image
 
-from .converter import convert_to_pixel_art, upscale_nearest
-from .palettes import PALETTES, hex_to_rgb, rgb_to_hex
-from .exporters import export_c_header, export_pico8_spritesheet, export_palette_json
 from . import __version__
+from .converter import convert_to_pixel_art, upscale_nearest
+from .exporters import export_c_header, export_palette_json, export_pico8_spritesheet
+from .palettes import PALETTES, hex_to_rgb, rgb_to_hex
 
 
 def format_palette_list() -> str:
@@ -16,10 +17,14 @@ def format_palette_list() -> str:
     lines = ["Available Retro Palettes:"]
     lines.append("-" * 60)
     for name, colors in PALETTES.items():
+        if name == "full-color":
+            lines.append(f"  • {name:<16} (24-bit RGB) : Modern unrestricted TrueColor (no palette crush)")
+            continue
         sample_hex = " ".join([rgb_to_hex(c) for c in colors[:4]])
         if len(colors) > 4:
             sample_hex += " ..."
         lines.append(f"  • {name:<16} ({len(colors):>2} colors) : {sample_hex}")
+    lines.append("  • adaptive-256     (256 colors): Modern rich 256-color VGA/GIF palette")
     lines.append("  • adaptive         (N colors)  : Auto-extracts from image (--colors N)")
     lines.append("-" * 60)
     lines.append("Tip: You can also pass custom hex values: --palette '#000,#ff0055,#ffffff'")

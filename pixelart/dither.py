@@ -1,6 +1,7 @@
 """Dithering algorithms and color quantization for retro pixel art."""
 
-from typing import List, Tuple, Optional
+from typing import List, Optional, Tuple
+
 import numpy as np
 
 RGBColor = Tuple[int, int, int]

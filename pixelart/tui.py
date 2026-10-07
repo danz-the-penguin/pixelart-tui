@@ -1,33 +1,33 @@
 """Interactive Terminal User Interface (TUI) for ImageToPixelArt using Textual."""
 
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import List, Optional, Tuple
+
 import numpy as np
 from PIL import Image, ImageDraw
-
+from rich.style import Style
+from rich.text import Text
+from textual import events, work
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual import events, work
 from textual.widgets import (
-    Header,
-    Footer,
     Button,
-    Input,
-    Select,
-    Switch,
-    Label,
-    Static,
-    Rule,
     DirectoryTree,
+    Footer,
+    Header,
+    Input,
+    Label,
+    Rule,
+    Select,
+    Static,
+    Switch,
     TabbedContent,
     TabPane,
 )
-from textual.reactive import reactive
-from rich.text import Text
-from rich.style import Style
 
-from .converter import convert_to_pixel_art, upscale_nearest, calculate_target_size
+from .converter import calculate_target_size, convert_to_pixel_art, upscale_nearest
 from .exporters import export_c_header, export_pico8_spritesheet
 
 MIN_TERMINAL_WIDTH = 100
@@ -112,80 +112,98 @@ def get_available_local_images() -> List[Tuple[str, str]]:
     return images
 
 
+def calculate_target_box(
+    orig_w: int,
+    orig_h: int,
+    max_w: int = 68,
+    max_h: int = 38,
+) -> Tuple[int, int]:
+    """Calculate target size fitting completely within (max_w, max_h) maintaining aspect ratio."""
+    scale = min(max_w / max(1, orig_w), max_h / max(1, orig_h))
+    tw = max(2, int(round(orig_w * scale)))
+    th = max(2, int(round(orig_h * scale)))
+    if th % 2 != 0:
+        th += 1
+    return tw, th
+
+
 def create_viewfinder_image(
     source_img: Image.Image,
     crop_x: int,
     crop_y: int,
     crop_w: int,
     crop_h: int,
-    display_w: int = 64,
+    crop_enabled: bool = True,
+    max_w: int = 68,
+    max_h: int = 38,
 ) -> Image.Image:
     """
-    Render full source image with shaded margins and a razor-sharp,
-    pixel-perfect glowing camera viewfinder border and corner brackets.
-    Drawn directly on display resolution to prevent blurry downsample artifacts.
+    Render full source image with an elegant, non-intrusive camera viewfinder HUD.
+    Features subtle outer dimming, crisp 1-pixel amber crop boundary, and corner ticks
+    WITHOUT obscuring the subject inside the crop window.
     """
     orig_w, orig_h = source_img.size
+    tw, th = calculate_target_box(orig_w, orig_h, max_w=max_w, max_h=max_h)
 
-    # 1. Scale down to display preview size maintaining aspect ratio
-    tw, th = calculate_target_size(orig_w, orig_h, max_dimension=display_w)
-    if th % 2 != 0:
-        th += 1
-    display_img = source_img.resize((tw, th), resample=Image.Resampling.BILINEAR).convert("RGBA")
+    # Use LANCZOS for crystal-clear preview resolution
+    display_img = source_img.resize((tw, th), resample=Image.Resampling.LANCZOS).convert("RGBA")
 
-    # 2. Map crop coordinates directly to display pixels
+    # If crop is disabled or covers full image
+    if not crop_enabled or (crop_w >= orig_w and crop_h >= orig_h and crop_x == 0 and crop_y == 0):
+        draw = ImageDraw.Draw(display_img)
+        draw.rectangle([0, 0, tw - 1, th - 1], outline=(88, 166, 255, 180), width=1)
+        return display_img
+
     scale_x = tw / orig_w
     scale_y = th / orig_h
 
-    dx = max(0, min(int(round(crop_x * scale_x)), tw - 1))
-    dy = max(0, min(int(round(crop_y * scale_y)), th - 1))
-    dw = max(3, min(int(round(crop_w * scale_x)), tw - dx))
-    dh = max(3, min(int(round(crop_h * scale_y)), th - dy))
+    dx = max(0, min(round(crop_x * scale_x), tw - 1))
+    dy = max(0, min(round(crop_y * scale_y), th - 1))
+    dw = max(2, min(round(crop_w * scale_x), tw - dx))
+    dh = max(2, min(round(crop_h * scale_y), th - dy))
 
-    # 3. Dim the area outside the crop box
-    overlay = Image.new("RGBA", (tw, th), (0, 0, 0, 160))
+    # 1. Soft darkening outside the crop box (35% opacity) so the surround is visible
+    overlay = Image.new("RGBA", (tw, th), (0, 0, 0, 90))
     mask = Image.new("L", (tw, th), 255)
     mask_draw = ImageDraw.Draw(mask)
+    # The inside of the crop is completely transparent in mask (100% bright image)
     mask_draw.rectangle([dx, dy, dx + dw - 1, dy + dh - 1], fill=0)
     display_img.paste(overlay, (0, 0), mask)
 
-    # 4. Draw crisp high-contrast border (black drop shadow + bright neon yellow line)
+    # 2. Draw crisp 1-pixel bright gold/amber boundary
     draw = ImageDraw.Draw(display_img)
-    draw.rectangle([dx, dy, dx + dw - 1, dy + dh - 1], outline=(0, 0, 0, 255), width=2)
-    draw.rectangle([dx + 1, dy + 1, dx + dw - 2, dy + dh - 2], outline=(255, 235, 59, 255), width=1)
+    if dx > 0 and dy > 0 and (dx + dw) < tw and (dy + dh) < th:
+        draw.rectangle([dx - 1, dy - 1, dx + dw, dy + dh], outline=(0, 0, 0, 160), width=1)
+    draw.rectangle([dx, dy, dx + dw - 1, dy + dh - 1], outline=(255, 215, 0, 255), width=1)
 
-    # 5. Draw neon cyan corner brackets [ ]
-    b_len = min(6, max(2, dw // 4), max(2, dh // 4))
-    cyan = (0, 255, 255, 255)
-    draw.line([(dx, dy), (dx + b_len, dy)], fill=cyan, width=2)
-    draw.line([(dx, dy), (dx, dy + b_len)], fill=cyan, width=2)
-    draw.line([(dx + dw - 1, dy), (dx + dw - 1 - b_len, dy)], fill=cyan, width=2)
-    draw.line([(dx + dw - 1, dy), (dx + dw - 1, dy + b_len)], fill=cyan, width=2)
-    draw.line([(dx, dy + dh - 1), (dx + b_len, dy + dh - 1)], fill=cyan, width=2)
-    draw.line([(dx, dy + dh - 1), (dx, dy + dh - 1 - b_len)], fill=cyan, width=2)
-    draw.line([(dx + dw - 1, dy + dh - 1), (dx + dw - 1 - b_len, dy + dh - 1)], fill=cyan, width=2)
-    draw.line([(dx + dw - 1, dy + dh - 1), (dx + dw - 1, dy + dh - 1 - b_len)], fill=cyan, width=2)
-
-    # 6. Center crosshair
-    mid_x = dx + dw // 2
-    mid_y = dy + dh // 2
-    draw.line([(mid_x - 2, mid_y), (mid_x + 2, mid_y)], fill=cyan, width=1)
-    draw.line([(mid_x, mid_y - 2), (mid_x, mid_y + 2)], fill=cyan, width=1)
+    # 3. Subtle corner ticks (length: 2-3px)
+    c_len = min(3, max(2, dw // 4), max(2, dh // 4))
+    cyan = (0, 240, 255, 255)
+    # Top-left
+    draw.line([(dx, dy), (dx + c_len, dy)], fill=cyan, width=1)
+    draw.line([(dx, dy), (dx, dy + c_len)], fill=cyan, width=1)
+    # Top-right
+    draw.line([(dx + dw - 1, dy), (dx + dw - 1 - c_len, dy)], fill=cyan, width=1)
+    draw.line([(dx + dw - 1, dy), (dx + dw - 1, dy + c_len)], fill=cyan, width=1)
+    # Bottom-left
+    draw.line([(dx, dy + dh - 1), (dx + c_len, dy + dh - 1)], fill=cyan, width=1)
+    draw.line([(dx, dy + dh - 1), (dx, dy + dh - 1 - c_len)], fill=cyan, width=1)
+    # Bottom-right
+    draw.line([(dx + dw - 1, dy + dh - 1), (dx + dw - 1 - c_len, dy + dh - 1)], fill=cyan, width=1)
+    draw.line([(dx + dw - 1, dy + dh - 1), (dx + dw - 1, dy + dh - 1 - c_len)], fill=cyan, width=1)
 
     return display_img
 
 
-def render_image_to_rich_text(img: Image.Image, max_dim: int = 64) -> Text:
+def render_image_to_rich_text(img: Image.Image, max_w: int = 68, max_h: int = 38) -> Text:
     """
     Render a PIL image to Rich Text using Unicode half-blocks (▀ and ▄).
     Each terminal row renders 2 vertical image pixels in full 24-bit RGB.
-    Constrained to max_dim width so lines NEVER wrap in terminal columns.
+    Constrained to (max_w, max_h) so lines NEVER wrap or overflow vertical bounds.
     """
     work_img = img
-    if work_img.width > max_dim or work_img.height > max_dim:
-        w, h = calculate_target_size(work_img.width, work_img.height, max_dimension=max_dim)
-        if h % 2 != 0:
-            h += 1
+    if work_img.width > max_w or work_img.height > max_h:
+        w, h = calculate_target_box(work_img.width, work_img.height, max_w=max_w, max_h=max_h)
         work_img = work_img.resize((w, h), resample=Image.Resampling.NEAREST)
     else:
         # Ensure height is even for half-blocks
@@ -283,7 +301,7 @@ class CanvasWidget(Static):
         width: 100%;
         height: 1fr;
         content-align: center middle;
-        overflow: hidden hidden;
+        overflow: auto auto;
         background: #11141c;
         border: round #3b4252;
     }
@@ -404,6 +422,16 @@ class PixelArtStudio(App):
         margin-bottom: 1;
     }
 
+    #viewfinder-hud, #slice-hud {
+        height: 3;
+        background: #1c2128;
+        color: #58a6ff;
+        content-align: center middle;
+        text-style: bold;
+        border: round #30363d;
+        margin-bottom: 0;
+    }
+
     .button-row {
         height: auto;
         margin-top: 1;
@@ -509,6 +537,9 @@ class PixelArtStudio(App):
         ("down", "crop_down", "Pan Down"),
         ("left", "crop_left", "Pan Left"),
         ("right", "crop_right", "Pan Right"),
+        ("1", "tab_pixel", "Pixel Art"),
+        ("2", "tab_viewfinder", "Viewfinder"),
+        ("3", "tab_slice", "Cropped Slice"),
     ]
 
     current_image_path: reactive[Optional[str]] = reactive(None)
@@ -668,7 +699,12 @@ class PixelArtStudio(App):
 
                 yield Label("Hardware Palette:", classes="field-label")
                 palette_options = [
+                    ("Modern Full Color (24-bit TrueColor)", "full-color"),
                     ("Adaptive 16 Colors (SNES / GBA Best)", "adaptive"),
+                    ("Modern Adaptive 256 Colors (Rich / VGA)", "adaptive-256"),
+                    ("Endesga 64 (Modern 64 Colors)", "endesga64"),
+                    ("Resurrect 64 (Indie 64 Colors)", "resurrect64"),
+                    ("Endesga 32 (Modern Pixel Art)", "endesga32"),
                     ("SNES Curated (16 Classic Colors)", "snes"),
                     ("SNES Adaptive (15-bit Hardware Snap)", "snes-adaptive"),
                     ("Sega Genesis / Mega Drive (16 Colors)", "genesis"),
@@ -692,7 +728,6 @@ class PixelArtStudio(App):
                     ("CGA Mode 1 (Cyan/Magenta)", "cga-mode1"),
                     ("CGA Mode 0 (Green/Red)", "cga-mode0"),
                     ("ZX Spectrum (15 Colors)", "zx-spectrum"),
-                    ("Endesga 32 (Modern Pixel Art)", "endesga32"),
                     ("Cyberpunk Synthwave", "cyberpunk"),
                     ("1-Bit Monochrome (B&W)", "1bit"),
                     ("CRT Phosphor Green (Terminal)", "crt-green"),
@@ -761,10 +796,14 @@ class PixelArtStudio(App):
             with Vertical(id="preview-area"):
                 yield Static("No Image Loaded", id="info-bar")
                 with TabbedContent(id="preview-tabs"):
-                    with TabPane("👾 Converted Pixel Art", id="tab-pixel"):
+                    with TabPane("👾 Pixel Art", id="tab-pixel"):
                         yield CanvasWidget(id="canvas-pixel")
-                    with TabPane("✂️ Live Crop Viewfinder", id="tab-source"):
+                    with TabPane("✂️ Viewfinder (Full)", id="tab-source"):
+                        yield Static("📷 Viewfinder: Full Frame", id="viewfinder-hud")
                         yield CanvasWidget(id="canvas-source")
+                    with TabPane("🔍 Cropped Slice", id="tab-crop-slice"):
+                        yield Static("✂️ Cropped Slice", id="slice-hud")
+                        yield CanvasWidget(id="canvas-slice")
                 yield Static("Ready", id="status-bar")
 
         yield Footer()
@@ -970,7 +1009,7 @@ class PixelArtStudio(App):
             )
 
             # 1. Render converted pixel art cleanly constrained to canvas display
-            rich_pixel = render_image_to_rich_text(sprite, max_dim=68)
+            rich_pixel = render_image_to_rich_text(sprite, max_w=68, max_h=38)
 
             # 2. Render razor-sharp camera viewfinder
             viewfinder_img = create_viewfinder_image(
@@ -979,15 +1018,36 @@ class PixelArtStudio(App):
                 crop_y if crop_enabled else 0,
                 crop_w if crop_enabled else orig_w,
                 crop_h if crop_enabled else orig_h,
-                display_w=68,
+                crop_enabled=crop_enabled,
+                max_w=68,
+                max_h=38,
             )
-            rich_viewfinder = render_image_to_rich_text(viewfinder_img, max_dim=68)
+            rich_viewfinder = render_image_to_rich_text(viewfinder_img, max_w=68, max_h=38)
+
+            # 3. Render cropped slice (high-detail preview)
+            if crop_enabled:
+                slice_img = self.current_source_img.crop((
+                    crop_x,
+                    crop_y,
+                    crop_x + crop_w,
+                    crop_y + crop_h,
+                ))
+                slice_hud = f"✂️ Cropped Slice: {crop_w}x{crop_h} px (Offset: X={crop_x}, Y={crop_y})"
+                pct = int((crop_w * crop_h) / (orig_w * orig_h) * 100) if (orig_w * orig_h) > 0 else 100
+                vf_hud = f"📷 Source: {orig_w}x{orig_h} | ✂️ Crop Box: {crop_w}x{crop_h} at ({crop_x}, {crop_y}) [{pct}% of frame]"
+            else:
+                slice_img = self.current_source_img
+                slice_hud = f"🖼️ Full Source Image: {orig_w}x{orig_h} px (Sub-region crop disabled)"
+                vf_hud = f"📷 Source: {orig_w}x{orig_h} | ✂️ Full Frame (Sub-region crop disabled in sidebar)"
+
+            rich_slice = render_image_to_rich_text(slice_img, max_w=68, max_h=38)
 
             # Update info bar text
             crop_str = f"Crop: {crop_w}x{crop_h}" if crop_enabled else "Full Size"
+            palette_disp = "24-bit TrueColor" if palette_val == "full-color" else f"{palette_val} ({len(palette)}c)"
             info_text = (
                 f"Sprite: {sprite.width}x{sprite.height} | {crop_str} | "
-                f"Palette: {palette_val} ({len(palette)}c) | Dither: {dither_val}"
+                f"Palette: {palette_disp} | Dither: {dither_val}"
             )
 
             self.call_from_thread(
@@ -997,6 +1057,9 @@ class PixelArtStudio(App):
                 palette,
                 rich_pixel,
                 rich_viewfinder,
+                rich_slice,
+                vf_hud,
+                slice_hud,
                 info_text,
             )
         except Exception as e:
@@ -1009,6 +1072,9 @@ class PixelArtStudio(App):
         palette: list,
         rich_pixel: Text,
         rich_viewfinder: Text,
+        rich_slice: Text,
+        vf_hud: str,
+        slice_hud: str,
         info_text: str,
     ) -> None:
         """Apply rendered sprites to UI widgets on main thread."""
@@ -1018,7 +1084,20 @@ class PixelArtStudio(App):
 
         self.query_one("#canvas-pixel", CanvasWidget).update(rich_pixel)
         self.query_one("#canvas-source", CanvasWidget).update(rich_viewfinder)
+        self.query_one("#canvas-slice", CanvasWidget).update(rich_slice)
+        self.query_one("#viewfinder-hud", Static).update(vf_hud)
+        self.query_one("#slice-hud", Static).update(slice_hud)
         self.query_one("#info-bar", Static).update(info_text)
+
+    # Tab switching actions
+    def action_tab_pixel(self) -> None:
+        self.query_one("#preview-tabs", TabbedContent).active = "tab-pixel"
+
+    def action_tab_viewfinder(self) -> None:
+        self.query_one("#preview-tabs", TabbedContent).active = "tab-source"
+
+    def action_tab_slice(self) -> None:
+        self.query_one("#preview-tabs", TabbedContent).active = "tab-crop-slice"
 
     # Crop manipulation actions
     def action_crop_up(self) -> None:

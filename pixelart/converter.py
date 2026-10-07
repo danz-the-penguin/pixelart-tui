@@ -1,26 +1,27 @@
 """Core pipeline for transforming high-resolution images into authentic retro pixel art."""
 
 from typing import Optional, Tuple
-from PIL import Image, ImageEnhance
-import numpy as np
 
+import numpy as np
+from PIL import Image, ImageEnhance
+
+from .dither import (
+    find_closest_palette_indices,
+    quantize_atkinson,
+    quantize_bayer,
+    quantize_blue_noise,
+    quantize_checkerboard,
+    quantize_error_diffusion,
+    quantize_floyd_steinberg,
+    quantize_none,
+)
 from .palettes import (
     Palette,
     RGBColor,
+    extract_adaptive_palette,
     get_palette_by_name,
     parse_custom_palette,
-    extract_adaptive_palette,
 )
-from .dither import (
-    quantize_none,
-    quantize_bayer,
-    quantize_checkerboard,
-    quantize_blue_noise,
-    quantize_floyd_steinberg,
-    quantize_atkinson,
-    quantize_error_diffusion,
-)
-
 
 RESAMPLE_METHODS = {
     "lanczos": Image.Resampling.LANCZOS,
@@ -273,10 +274,29 @@ def convert_to_pixel_art(
     else:
         low_res_rgb = np.array(low_res_img.convert("RGB"))
 
-    # 6. Resolve Palette
+    # 6. Resolve Palette & Modern Full Color
     palette: Palette
     palette_lower = palette_name_or_spec.lower().strip()
-    if palette_lower in ("adaptive", "custom-k", "auto"):
+    is_full_color = palette_lower in (
+        "full-color", "fullcolor", "truecolor", "modern-full-color",
+        "modern", "24bit", "rgb24", "unrestricted"
+    )
+
+    if is_full_color:
+        quantized_rgb = low_res_rgb.copy()
+        flat_rgb = low_res_rgb.reshape(-1, 3)
+        unique_colors_arr = np.unique(flat_rgb, axis=0)
+        if len(unique_colors_arr) <= 256:
+            palette = [tuple(int(val) for val in c) for c in unique_colors_arr]
+            palette_arr = unique_colors_arr.astype(np.float32)
+            indices = find_closest_palette_indices(low_res_rgb.astype(np.float32), palette_arr, perceptual=False)
+        else:
+            palette = extract_adaptive_palette(low_res_img, num_colors=256)
+            palette_arr = np.array(palette, dtype=np.float32)
+            indices = find_closest_palette_indices(low_res_rgb.astype(np.float32), palette_arr, perceptual=False)
+    elif palette_lower in ("adaptive-256", "vga-256", "modern-256", "full-256", "256-color"):
+        palette = extract_adaptive_palette(low_res_img, num_colors=256)
+    elif palette_lower in ("adaptive", "custom-k", "auto"):
         palette = extract_adaptive_palette(low_res_img, num_colors=num_adaptive_colors)
     elif palette_lower in ("snes-adaptive", "snes-15bit"):
         palette = extract_adaptive_palette(low_res_img, num_colors=16, snap_snes=True)
@@ -284,14 +304,17 @@ def convert_to_pixel_art(
         palette = extract_adaptive_palette(low_res_img, num_colors=16, snap_genesis=True)
     else:
         preset = get_palette_by_name(palette_lower)
-        if preset is not None:
+        if preset is not None and len(preset) > 0:
             palette = preset
         else:
             palette = parse_custom_palette(palette_name_or_spec)
 
     # 7. Apply Quantization & Dithering
     dither_clean = dither_mode.lower().strip()
-    if dither_clean.startswith("bayer"):
+    if is_full_color and dither_clean in ("none", "flat"):
+        # TrueColor direct pixel art: retain all original 24-bit colors
+        pass
+    elif dither_clean.startswith("bayer"):
         # e.g. bayer, bayer-2x2, bayer-4x4, bayer-8x8
         matrix_sz = bayer_matrix_size
         if "2" in dither_clean:

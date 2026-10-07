@@ -19,8 +19,12 @@ uv run python main.py --tui
 ```
 
 ### ✨ TUI Features
-- **Live Terminal Canvas & Dual Tabs**: True-color ANSI rendering using Unicode half-blocks (`▀` and `▄`) with tabs to toggle between **👾 Pixel Art** and **✂️ Cropped Source**.
-- **Interactive Cropping & Panning D-Pad**: Move and pan the crop window across high-res art using `▲`, `▼`, `◄`, `►` buttons or Arrow Keys (`↑`, `↓`, `←`, `→`).
+- **Live Terminal Canvas & Triple Tabs**: True-color ANSI rendering using Unicode half-blocks (`▀` and `▄`) with 3 tabs:
+  - **👾 Pixel Art**: Final retro sprite with palette, dithering, and outline.
+  - **✂️ Viewfinder (Full)**: Non-intrusive camera HUD showing full source image with highlighted amber crop frame.
+  - **🔍 Cropped Slice**: Exact 1:1 cropped slice at high clarity before conversion.
+- **Instant Hotkeys**: Switch tabs with `1`, `2`, `3` and pan crop box with Arrow Keys (`↑`, `↓`, `←`, `→`).
+- **Interactive Cropping & Panning D-Pad**: Move and pan the crop window across high-res art using `▲`, `▼`, `◄`, `►` buttons.
 - **Custom Crop Dimensions**: Type your exact wanted Width & Height, or use quick presets (`1:1 Square`, `Center`, `Reset Full`).
 - **Instant Previews**: Adjust resolution, switch retro palettes, toggle outlines, and see results update in real-time.
 - **One-Click Game Exports**: Save upscaled preview PNGs, native 1x sprites, C headers (`.h`), and PICO-8 hex sprites with a single click.
@@ -29,7 +33,10 @@ uv run python main.py --tui
 
 ## 🌟 Core Engine Features
 
-- **Hardware-Accurate Palettes (26+ Systems)**:
+- **Modern & Hardware-Accurate Palettes (28+ Systems & Modes)**:
+  - **Modern Full Color (24-bit TrueColor `full-color`)**: Unrestricted 16.7M RGB colors downsampled to pixel grid without palette crushing (*Hyper Light Drifter*, *Eastward*, *Dead Cells* aesthetic).
+  - **Modern Adaptive 256 Colors (`adaptive-256`)**: Rich 256-color palette (VGA Mode 13h, DOS, GIF).
+  - **Modern Indie Palettes**: **Endesga 64**, **Resurrect 64**, **Endesga 32**, and **Cyberpunk Synthwave**.
   - **Nintendo SNES** (Curated 16 colors & 15-bit hardware grid snap `snes-adaptive`)
   - **Sega Genesis / Mega Drive** (16 colors & 9-bit hardware grid snap `genesis-adaptive`)
   - **Nintendo Game Boy Advance** (GBA curated 16-color palette)
@@ -45,8 +52,7 @@ uv run python main.py --tui
   - **IBM PC CGA** (Mode 0 & Mode 1 high-intensity)
   - **ZX Spectrum** (15 standard Sinclair colors)
   - **CRT Terminals & 1-bit** (IBM 5151 green phosphor, amber CRT terminal, 1-bit B&W)
-  - **Endesga 32 & Cyberpunk** (Modern indie pixel art palettes)
-  - **Adaptive Palette**: Automatically extracts optimal N-color palettes (--colors N)
+  - **Adaptive Palette**: Automatically extracts optimal N-color palettes (`--colors N`)
   - **Custom Palettes**: Supports comma-separated hex colors (e.g. `--palette '#000,#ff0055,#ffffff'`) or `.gpl`/text palette files.
 - **Authentic Dithering Modes (11 Algorithms)**:
   - `none`: Crisp, clean cel-shaded retro look.
@@ -117,7 +123,7 @@ uv run python main.py --list-palettes
 | Target Height | `-H, --height` | Fixed height in pixels | Auto |
 | Max Dimension | `-s, --size` | Max bounding box (keeps aspect ratio) | `64` |
 | Downscale Divisor | `-d, --downscale` | Divides width/height by integer factor (e.g. 4, 8) | None |
-| Palette | `-p, --palette` | `pico8`, `gameboy`, `nes`, `c64`, `cga-mode1`, `adaptive`, etc. | `pico8` |
+| Palette | `-p, --palette` | `full-color`, `adaptive-256`, `snes`, `genesis`, `pico8`, `gameboy`, etc. | `pico8` |
 | Adaptive Colors | `-c, --colors` | Number of colors when using `--palette adaptive` | `16` |
 | Dither Algorithm | `--dither` | `none`, `bayer-2x2`, `bayer-4x4`, `bayer-8x8`, `checkerboard`, `blue-noise`, `floyd`, `atkinson`, `burkes`, `sierra`, `stucki` | `none` |
 | Dither Strength | `--dither-strength`| Multiplier for dithering spread | `1.0` |
