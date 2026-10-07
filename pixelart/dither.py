@@ -305,7 +305,21 @@ def quantize_floyd_steinberg(
     strength: float = 1.0,
     perceptual: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Error-diffusion Floyd-Steinberg dithering."""
+    """Error-diffusion Floyd-Steinberg dithering with C-acceleration for large images."""
+    H, W, _ = rgb_arr.shape
+    if (H * W > 256 * 256) and alpha_mask is None and strength == 1.0:
+        try:
+            from PIL import Image
+            from .palettes import palette_to_pil_image
+            pal_img = palette_to_pil_image(palette)
+            src_img = Image.fromarray(rgb_arr, mode="RGB")
+            quantized = src_img.quantize(palette=pal_img, dither=Image.Dither.FLOYDSTEINBERG)
+            indices = np.array(quantized, dtype=np.uint8)
+            palette_arr = np.array(palette, dtype=np.uint8)
+            quantized_rgb = palette_arr[indices]
+            return quantized_rgb, indices
+        except Exception:
+            pass
     return quantize_error_diffusion(
         rgb_arr, palette, kernel_name="floyd", alpha_mask=alpha_mask, strength=strength, perceptual=perceptual
     )

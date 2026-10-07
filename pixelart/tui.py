@@ -194,6 +194,10 @@ def create_viewfinder_image(
     return display_img
 
 
+SAFE_MAX_RENDER_W = 320
+SAFE_MAX_RENDER_H = 240
+
+
 def render_image_to_rich_text(
     img: Image.Image,
     zoom_mode: str = "native",
@@ -207,6 +211,8 @@ def render_image_to_rich_text(
         - 'native' / '1x': 100% pixel-perfect 1:1 scale (zero downsampling, zero Moiré)
         - 'fit': fits inside (max_w, max_h) maintaining aspect ratio
         - '2x', '3x', '4x': crisp nearest-neighbor integer zoom
+    Equipped with a hard safety clamp to prevent terminal DOM freezes on massive images,
+    style caching, and Run-Length Encoding (RLE) to group consecutive identical character runs.
     """
     work_img = img
 
@@ -221,8 +227,12 @@ def render_image_to_rich_text(
             w, h = calculate_target_box(work_img.width, work_img.height, max_w=max_w, max_h=max_h)
             work_img = work_img.resize((w, h), resample=Image.Resampling.NEAREST)
     else:  # "native" or "1x"
-        # Zero scaling! 100% pixel-perfect native sprite resolution
         pass
+
+    # Hard safety clamp: Never send more than SAFE_MAX_RENDER_W x SAFE_MAX_RENDER_H into terminal cells
+    if work_img.width > SAFE_MAX_RENDER_W or work_img.height > SAFE_MAX_RENDER_H:
+        w, h = calculate_target_box(work_img.width, work_img.height, max_w=SAFE_MAX_RENDER_W, max_h=SAFE_MAX_RENDER_H)
+        work_img = work_img.resize((w, h), resample=Image.Resampling.NEAREST)
 
     # Ensure height is even for half-blocks
     if work_img.height % 2 != 0:
@@ -235,7 +245,13 @@ def render_image_to_rich_text(
     h, w, _ = rgba.shape
     text = Text(no_wrap=True)
 
+    style_cache: dict = {}
+
     for y in range(0, h, 2):
+        curr_char = ""
+        curr_style = None
+        curr_run = 0
+
         for x in range(w):
             top = rgba[y, x]
             bot = rgba[y + 1, x] if y + 1 < h else np.array([0, 0, 0, 0], dtype=np.uint8)
@@ -247,21 +263,51 @@ def render_image_to_rich_text(
                 if checker_bg:
                     bg_top = (18, 22, 30) if ((x + y) % 2 == 0) else (12, 15, 22)
                     bg_bot = (18, 22, 30) if ((x + y + 1) % 2 == 0) else (12, 15, 22)
-                    text.append("▀", style=Style(color=f"rgb({bg_top[0]},{bg_top[1]},{bg_top[2]})", bgcolor=f"rgb({bg_bot[0]},{bg_bot[1]},{bg_bot[2]})"))
+                    cell_char = "▀"
+                    key = ("chk", bg_top, bg_bot)
+                    if key not in style_cache:
+                        style_cache[key] = Style(
+                            color=f"rgb({bg_top[0]},{bg_top[1]},{bg_top[2]})",
+                            bgcolor=f"rgb({bg_bot[0]},{bg_bot[1]},{bg_bot[2]})",
+                        )
+                    cell_style = style_cache[key]
                 else:
-                    text.append(" ")
+                    cell_char = " "
+                    cell_style = None
             elif top_visible and not bot_visible:
-                text.append("▀", style=Style(color=f"rgb({top[0]},{top[1]},{top[2]})"))
+                cell_char = "▀"
+                key = ("top", int(top[0]), int(top[1]), int(top[2]))
+                if key not in style_cache:
+                    style_cache[key] = Style(color=f"rgb({top[0]},{top[1]},{top[2]})")
+                cell_style = style_cache[key]
             elif not top_visible and bot_visible:
-                text.append("▄", style=Style(color=f"rgb({bot[0]},{bot[1]},{bot[2]})"))
+                cell_char = "▄"
+                key = ("bot", int(bot[0]), int(bot[1]), int(bot[2]))
+                if key not in style_cache:
+                    style_cache[key] = Style(color=f"rgb({bot[0]},{bot[1]},{bot[2]})")
+                cell_style = style_cache[key]
             else:
-                text.append(
-                    "▀",
-                    style=Style(
+                cell_char = "▀"
+                key = ("both", int(top[0]), int(top[1]), int(top[2]), int(bot[0]), int(bot[1]), int(bot[2]))
+                if key not in style_cache:
+                    style_cache[key] = Style(
                         color=f"rgb({top[0]},{top[1]},{top[2]})",
                         bgcolor=f"rgb({bot[0]},{bot[1]},{bot[2]})",
-                    ),
-                )
+                    )
+                cell_style = style_cache[key]
+
+            if cell_char == curr_char and cell_style == curr_style:
+                curr_run += 1
+            else:
+                if curr_run > 0:
+                    text.append(curr_char * curr_run, style=curr_style)
+                curr_char = cell_char
+                curr_style = cell_style
+                curr_run = 1
+
+        if curr_run > 0:
+            text.append(curr_char * curr_run, style=curr_style)
+
         if y + 2 < h:
             text.append("\n")
 
@@ -865,6 +911,8 @@ class PixelArtStudio(App):
     crop_step: int = 10
     _updating_inputs: bool = False
     _updating_theme: bool = False
+    _updating_controls: bool = False
+    _was_too_small: bool = False
     _initialized: bool = False
 
     def __init__(self, initial_image: Optional[str] = None):
@@ -1150,8 +1198,10 @@ class PixelArtStudio(App):
             warn_lbl.update(
                 f"Current Size: {width} x {height} | Required Minimum: {MIN_TERMINAL_WIDTH} x {MIN_TERMINAL_HEIGHT}"
             )
+            self._was_too_small = True
         else:
-            if self._initialized and self.current_source_img:
+            if self._was_too_small and self._initialized and self.current_source_img:
+                self._was_too_small = False
                 self.reprocess_pixel_art()
 
     def on_resize(self, event: events.Resize) -> None:
@@ -1194,6 +1244,7 @@ class PixelArtStudio(App):
             self.notify(f"Could not find: '{file_path_str}'. Check file name or path.", title="File Not Found", severity="error")
             return
 
+        self._updating_controls = True
         try:
             self.current_source_img = Image.open(resolved)
             self.current_image_path = str(resolved)
@@ -1202,13 +1253,21 @@ class PixelArtStudio(App):
             inp = self.query_one("#input-path", Input)
             inp.value = resolved.name
 
-            # Reset crop to full image bounds
+            # Reset crop to full image bounds or centered framing for large images
             orig_w, orig_h = self.current_source_img.size
+            max_dim = max(orig_w, orig_h)
             if not self.crop_enabled:
-                self.crop_x = 0
-                self.crop_y = 0
-                self.crop_w = orig_w
-                self.crop_h = orig_h
+                if max_dim <= 256:
+                    self.crop_x = 0
+                    self.crop_y = 0
+                    self.crop_w = orig_w
+                    self.crop_h = orig_h
+                else:
+                    crop_dim = min(orig_w, orig_h, 256)
+                    self.crop_w = crop_dim
+                    self.crop_h = crop_dim
+                    self.crop_x = (orig_w - crop_dim) // 2
+                    self.crop_y = (orig_h - crop_dim) // 2
             else:
                 self.crop_w = min(self.crop_w or orig_w, orig_w)
                 self.crop_h = min(self.crop_h or orig_h, orig_h)
@@ -1216,6 +1275,32 @@ class PixelArtStudio(App):
                 self.crop_y = min(self.crop_y, orig_h - self.crop_h)
 
             self.update_crop_input_fields()
+
+            # Set resolution dropdown appropriately
+            try:
+                res_select = self.query_one("#select-resolution", Select)
+                if max_dim <= 256:
+                    if res_select.value != "original":
+                        res_select.value = "original"
+                else:
+                    if res_select.value != "128":
+                        res_select.value = "128"
+            except Exception:
+                pass
+
+            # Proportional nudge step for large images
+            if max_dim >= 1024:
+                self.crop_step = 25
+                try:
+                    self.query_one("#select-crop-step", Select).value = "25"
+                except Exception:
+                    pass
+            elif max_dim >= 512:
+                self.crop_step = 10
+                try:
+                    self.query_one("#select-crop-step", Select).value = "10"
+                except Exception:
+                    pass
 
             # Sync select-quick-image if this file is in options
             quick_select = self.query_one("#select-quick-image", Select)
@@ -1228,11 +1313,14 @@ class PixelArtStudio(App):
             msg = f"Loaded {resolved.name} ({orig_w}x{orig_h})"
             self.set_status(msg)
             self.notify(msg, title="Image Loaded", severity="information")
-            self.reprocess_pixel_art()
         except Exception as e:
             err_msg = f"Error opening image: {e}"
             self.set_status(err_msg, is_error=True)
             self.notify(err_msg, title="Image Error", severity="error")
+        finally:
+            self._updating_controls = False
+
+        self.reprocess_pixel_art()
 
     def update_crop_input_fields(self) -> None:
         """Update crop input values in sidebar."""
@@ -1306,12 +1394,24 @@ class PixelArtStudio(App):
                 wrm_val = 0.0
                 tnt_val = None
 
-            # Resolution calculation
+            # Resolution calculation with retro hardware limits
             effective_w, effective_h = source_to_render.size
             if res_val == "original":
-                target_w, target_h = effective_w, effective_h
+                if crop_enabled:
+                    target_w = min(effective_w, 320)
+                    target_h = min(effective_h, 240)
+                else:
+                    if max(effective_w, effective_h) > 256:
+                        target_w, target_h = calculate_target_size(
+                            effective_w,
+                            effective_h,
+                            max_dimension=256,
+                        )
+                    else:
+                        target_w, target_h = min(effective_w, 320), min(effective_h, 240)
             elif res_val == "half":
-                target_w, target_h = max(1, effective_w // 2), max(1, effective_h // 2)
+                target_w = max(1, min(effective_w // 2, 256))
+                target_h = max(1, min(effective_h // 2, 240))
             else:
                 target_dim = int(res_val)
                 if aspect_mode == "fit":
@@ -1359,7 +1459,7 @@ class PixelArtStudio(App):
                 max_w=68,
                 max_h=38,
             )
-            rich_viewfinder = render_image_to_rich_text(viewfinder_img, max_w=68, max_h=38)
+            rich_viewfinder = render_image_to_rich_text(viewfinder_img, zoom_mode="fit", max_w=68, max_h=38)
 
             # 3. Render cropped slice (high-detail preview)
             if crop_enabled:
@@ -1377,7 +1477,7 @@ class PixelArtStudio(App):
                 slice_hud = f"🖼️ Full Source Image: {orig_w}x{orig_h} px (Sub-region crop disabled)"
                 vf_hud = f"📷 Source: {orig_w}x{orig_h} | ✂️ Full Frame (Sub-region crop disabled in sidebar)"
 
-            rich_slice = render_image_to_rich_text(slice_img, max_w=68, max_h=38)
+            rich_slice = render_image_to_rich_text(slice_img, zoom_mode="fit", max_w=68, max_h=38)
 
             # Update info bar text
             crop_str = f"Crop: {crop_w}x{crop_h}" if crop_enabled else "Full Size"
@@ -1616,7 +1716,7 @@ class PixelArtStudio(App):
             self.set_zoom_mode("4x")
 
     def on_select_changed(self, event: Select.Changed) -> None:
-        if not self._initialized:
+        if not self._initialized or self._updating_controls:
             return
         if event.select.id == "select-quick-image":
             if not event.select.is_blank() and event.value:
@@ -1637,6 +1737,15 @@ class PixelArtStudio(App):
             return
         if event.switch.id == "switch-crop":
             self.crop_enabled = bool(event.value)
+            if self.crop_enabled and self.current_source_img:
+                orig_w, orig_h = self.current_source_img.size
+                if self.crop_w == orig_w and self.crop_h == orig_h and (orig_w > 256 or orig_h > 256):
+                    crop_dim = min(orig_w, orig_h, 256)
+                    self.crop_w = crop_dim
+                    self.crop_h = crop_dim
+                    self.crop_x = (orig_w - crop_dim) // 2
+                    self.crop_y = (orig_h - crop_dim) // 2
+                    self.update_crop_input_fields()
             self.reprocess_pixel_art()
         else:
             self.reprocess_pixel_art()
