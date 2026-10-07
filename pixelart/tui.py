@@ -16,7 +16,6 @@ from textual.widgets import (
     Button,
     DirectoryTree,
     Footer,
-    Header,
     Input,
     Label,
     Rule,
@@ -195,21 +194,42 @@ def create_viewfinder_image(
     return display_img
 
 
-def render_image_to_rich_text(img: Image.Image, max_w: int = 68, max_h: int = 38) -> Text:
+def render_image_to_rich_text(
+    img: Image.Image,
+    zoom_mode: str = "native",
+    max_w: int = 68,
+    max_h: int = 38,
+    checker_bg: bool = False,
+) -> Text:
     """
     Render a PIL image to Rich Text using Unicode half-blocks (▀ and ▄).
-    Each terminal row renders 2 vertical image pixels in full 24-bit RGB.
-    Constrained to (max_w, max_h) so lines NEVER wrap or overflow vertical bounds.
+    zoom_mode:
+        - 'native' / '1x': 100% pixel-perfect 1:1 scale (zero downsampling, zero Moiré)
+        - 'fit': fits inside (max_w, max_h) maintaining aspect ratio
+        - '2x', '3x', '4x': crisp nearest-neighbor integer zoom
     """
     work_img = img
-    if work_img.width > max_w or work_img.height > max_h:
-        w, h = calculate_target_box(work_img.width, work_img.height, max_w=max_w, max_h=max_h)
-        work_img = work_img.resize((w, h), resample=Image.Resampling.NEAREST)
-    else:
-        # Ensure height is even for half-blocks
-        if work_img.height % 2 != 0:
-            w, h = work_img.width, work_img.height + 1
+
+    if zoom_mode in ("2x", "3x", "4x"):
+        scale = int(zoom_mode[0])
+        work_img = work_img.resize(
+            (work_img.width * scale, work_img.height * scale),
+            resample=Image.Resampling.NEAREST,
+        )
+    elif zoom_mode == "fit":
+        if work_img.width > max_w or work_img.height > max_h:
+            w, h = calculate_target_box(work_img.width, work_img.height, max_w=max_w, max_h=max_h)
             work_img = work_img.resize((w, h), resample=Image.Resampling.NEAREST)
+    else:  # "native" or "1x"
+        # Zero scaling! 100% pixel-perfect native sprite resolution
+        pass
+
+    # Ensure height is even for half-blocks
+    if work_img.height % 2 != 0:
+        w, h = work_img.width, work_img.height + 1
+        padded = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        padded.paste(work_img, (0, 0))
+        work_img = padded
 
     rgba = np.array(work_img.convert("RGBA"))
     h, w, _ = rgba.shape
@@ -224,7 +244,12 @@ def render_image_to_rich_text(img: Image.Image, max_w: int = 68, max_h: int = 38
             bot_visible = bot[3] >= 128
 
             if not top_visible and not bot_visible:
-                text.append(" ")
+                if checker_bg:
+                    bg_top = (18, 22, 30) if ((x + y) % 2 == 0) else (12, 15, 22)
+                    bg_bot = (18, 22, 30) if ((x + y + 1) % 2 == 0) else (12, 15, 22)
+                    text.append("▀", style=Style(color=f"rgb({bg_top[0]},{bg_top[1]},{bg_top[2]})", bgcolor=f"rgb({bg_bot[0]},{bg_bot[1]},{bg_bot[2]})"))
+                else:
+                    text.append(" ")
             elif top_visible and not bot_visible:
                 text.append("▀", style=Style(color=f"rgb({top[0]},{top[1]},{top[2]})"))
             elif not top_visible and bot_visible:
@@ -302,10 +327,35 @@ class CanvasWidget(Static):
         height: 1fr;
         content-align: center middle;
         overflow: auto auto;
-        background: #11141c;
-        border: round #3b4252;
+        background: #05060a;
+        border: double #00f0ff;
     }
     """
+
+
+class RetroHeader(Static):
+    """Arcade marquee retro header banner."""
+
+    DEFAULT_CSS = """
+    RetroHeader {
+        height: 3;
+        dock: top;
+        content-align: center middle;
+        text-style: bold;
+        background: #0c0f17;
+        color: #00f0ff;
+        border-bottom: heavy #00f0ff;
+    }
+    """
+
+    def render(self) -> Text:
+        banner = Text()
+        banner.append("🕹️  P I X E L A R T   S T U D I O   v 2 . 0  ", style="bold #00f5ff")
+        banner.append("══╡ ", style="bold #ff007f")
+        banner.append("ARCADE SPRITE ENGINE", style="bold #ffd700")
+        banner.append(" ╞══ ", style="bold #ff007f")
+        banner.append("[● LIVE RETRO TUI]", style="bold #39ff14")
+        return banner
 
 
 class PixelArtStudio(App):
@@ -315,7 +365,7 @@ class PixelArtStudio(App):
     SUB_TITLE = "Retro Sprite Converter & Live Cropping Studio"
     CSS = """
     Screen {
-        background: #0d1117;
+        background: #07080d;
     }
 
     /* Warning overlay when terminal is too small */
@@ -323,7 +373,7 @@ class PixelArtStudio(App):
         width: 100%;
         height: 100%;
         align: center middle;
-        background: #0d1117;
+        background: #07080d;
         color: #e6edf3;
         display: none;
     }
@@ -332,7 +382,7 @@ class PixelArtStudio(App):
         width: 72;
         height: auto;
         border: thick #f85149;
-        background: #161b22;
+        background: #111420;
         padding: 2 3;
         align: center middle;
         text-align: center;
@@ -363,8 +413,8 @@ class PixelArtStudio(App):
     #sidebar {
         width: 44;
         height: 100%;
-        background: #161b22;
-        border-right: solid #30363d;
+        background: #0c0f17;
+        border-right: double #00f0ff;
         padding: 1 2;
     }
 
@@ -376,7 +426,7 @@ class PixelArtStudio(App):
 
     .section-title {
         text-style: bold;
-        color: #58a6ff;
+        color: #00f0ff;
         margin-top: 1;
         margin-bottom: 0;
     }
@@ -404,32 +454,65 @@ class PixelArtStudio(App):
 
     #status-bar {
         height: 3;
-        background: #1f242c;
-        color: #7ee787;
+        background: #0c0f17;
+        color: #39ff14;
         padding: 0 1;
         content-align: left middle;
-        border: round #30363d;
+        border: double #39ff14;
         margin-top: 1;
+        text-style: bold;
     }
 
     #info-bar {
         height: 3;
-        background: #1c2128;
-        color: #e6edf3;
+        background: #0c0f17;
+        color: #ffd700;
         content-align: center middle;
         text-style: bold;
-        border: round #30363d;
+        border: double #ffd700;
         margin-bottom: 1;
     }
 
     #viewfinder-hud, #slice-hud {
         height: 3;
-        background: #1c2128;
-        color: #58a6ff;
+        background: #0c0f17;
+        color: #00f0ff;
         content-align: center middle;
         text-style: bold;
-        border: round #30363d;
+        border: double #00f0ff;
         margin-bottom: 0;
+    }
+
+    #zoom-bar {
+        height: 3;
+        align: left middle;
+        padding: 0 1;
+        margin-bottom: 0;
+        background: #0c0f17;
+        border: double #ffb000;
+    }
+
+    .zoom-lbl {
+        content-align: left middle;
+        text-style: bold;
+        color: #ffb000;
+        margin-right: 1;
+    }
+
+    .zoom-btn {
+        height: 1;
+        min-width: 8;
+        padding: 0 1;
+        margin-right: 1;
+        background: #1a2234;
+        color: #8b949e;
+        border: none;
+    }
+
+    .zoom-btn.active-zoom {
+        background: #ffb000;
+        color: #07080d;
+        text-style: bold;
     }
 
     .button-row {
@@ -457,7 +540,7 @@ class PixelArtStudio(App):
         width: 3;
         content-align: left middle;
         text-style: bold;
-        color: #58a6ff;
+        color: #00f0ff;
     }
 
     .dim-row Input {
@@ -525,6 +608,223 @@ class PixelArtStudio(App):
         padding: 0;
         height: 1fr;
     }
+
+    /* THEME: Arcade Neon (Default) */
+    .theme-arcade Screen {
+        background: #07080d;
+    }
+    .theme-arcade #sidebar {
+        background: #0c0f17;
+        border-right: double #00f0ff;
+    }
+    .theme-arcade CanvasWidget {
+        border: double #00f0ff;
+        background: #05060a;
+    }
+    .theme-arcade RetroHeader {
+        background: #0c0f17;
+        color: #00f0ff;
+        border-bottom: heavy #00f0ff;
+    }
+    .theme-arcade #zoom-bar {
+        background: #0c0f17;
+        border: double #ffb000;
+    }
+
+    /* THEME: MS-DOS Commander */
+    .theme-dos Screen {
+        background: #000080;
+    }
+    .theme-dos #sidebar {
+        background: #0000a8;
+        border-right: double #00ffff;
+    }
+    .theme-dos .section-title {
+        color: #ffff00;
+    }
+    .theme-dos Button {
+        background: #00aaaa;
+        color: #000000;
+    }
+    .theme-dos CanvasWidget {
+        border: double #00ffff;
+        background: #000050;
+    }
+    .theme-dos #status-bar {
+        background: #00aaaa;
+        color: #000000;
+        border: double #00ffff;
+    }
+    .theme-dos #info-bar {
+        background: #0000a8;
+        color: #ffff00;
+        border: double #00ffff;
+    }
+    .theme-dos RetroHeader {
+        background: #000080;
+        color: #ffff00;
+        border-bottom: heavy #00ffff;
+    }
+    .theme-dos #zoom-bar {
+        background: #0000a8;
+        border: double #00ffff;
+    }
+
+    /* THEME: CRT Amber Phosphor */
+    .theme-amber Screen {
+        background: #080400;
+    }
+    .theme-amber #sidebar {
+        background: #140a00;
+        border-right: double #ff9000;
+    }
+    .theme-amber .section-title {
+        color: #ffb000;
+    }
+    .theme-amber Button {
+        background: #2a1500;
+        color: #ffb000;
+    }
+    .theme-amber CanvasWidget {
+        border: double #ffb000;
+        background: #0a0500;
+    }
+    .theme-amber #status-bar {
+        background: #140a00;
+        color: #ffb000;
+        border: double #ff9000;
+    }
+    .theme-amber #info-bar {
+        background: #140a00;
+        color: #ffd060;
+        border: double #ffb000;
+    }
+    .theme-amber RetroHeader {
+        background: #140a00;
+        color: #ffb000;
+        border-bottom: heavy #ff9000;
+    }
+    .theme-amber #zoom-bar {
+        background: #140a00;
+        border: double #ff9000;
+    }
+
+    /* THEME: CRT Green Matrix */
+    .theme-green Screen {
+        background: #000a02;
+    }
+    .theme-green #sidebar {
+        background: #001505;
+        border-right: double #00ff41;
+    }
+    .theme-green .section-title {
+        color: #39ff14;
+    }
+    .theme-green Button {
+        background: #002509;
+        color: #00ff41;
+    }
+    .theme-green CanvasWidget {
+        border: double #00ff41;
+        background: #000e03;
+    }
+    .theme-green #status-bar {
+        background: #001505;
+        color: #39ff14;
+        border: double #00ff41;
+    }
+    .theme-green #info-bar {
+        background: #001505;
+        color: #70ff70;
+        border: double #00ff41;
+    }
+    .theme-green RetroHeader {
+        background: #001505;
+        color: #39ff14;
+        border-bottom: heavy #00ff41;
+    }
+    .theme-green #zoom-bar {
+        background: #001505;
+        border: double #00ff41;
+    }
+
+    /* THEME: Game Boy DMG */
+    .theme-dmg Screen {
+        background: #0f380f;
+    }
+    .theme-dmg #sidebar {
+        background: #306230;
+        border-right: double #8bac0f;
+    }
+    .theme-dmg .section-title {
+        color: #9bbc0f;
+    }
+    .theme-dmg Button {
+        background: #0f380f;
+        color: #9bbc0f;
+    }
+    .theme-dmg CanvasWidget {
+        border: double #9bbc0f;
+        background: #0f380f;
+    }
+    .theme-dmg #status-bar {
+        background: #306230;
+        color: #9bbc0f;
+        border: double #8bac0f;
+    }
+    .theme-dmg #info-bar {
+        background: #306230;
+        color: #9bbc0f;
+        border: double #8bac0f;
+    }
+    .theme-dmg RetroHeader {
+        background: #306230;
+        color: #9bbc0f;
+        border-bottom: heavy #8bac0f;
+    }
+    .theme-dmg #zoom-bar {
+        background: #306230;
+        border: double #8bac0f;
+    }
+
+    /* THEME: Cyberpunk Synthwave */
+    .theme-cyberpunk Screen {
+        background: #0d0221;
+    }
+    .theme-cyberpunk #sidebar {
+        background: #17073b;
+        border-right: double #ff007f;
+    }
+    .theme-cyberpunk .section-title {
+        color: #00fff5;
+    }
+    .theme-cyberpunk Button {
+        background: #260a5e;
+        color: #ff007f;
+    }
+    .theme-cyberpunk CanvasWidget {
+        border: double #00fff5;
+        background: #080117;
+    }
+    .theme-cyberpunk #status-bar {
+        background: #17073b;
+        color: #00fff5;
+        border: double #00fff5;
+    }
+    .theme-cyberpunk #info-bar {
+        background: #17073b;
+        color: #ff007f;
+        border: double #ff007f;
+    }
+    .theme-cyberpunk RetroHeader {
+        background: #17073b;
+        color: #ff007f;
+        border-bottom: heavy #ff007f;
+    }
+    .theme-cyberpunk #zoom-bar {
+        background: #17073b;
+        border: double #ff007f;
+    }
     """
 
     BINDINGS = [
@@ -533,6 +833,8 @@ class PixelArtStudio(App):
         ("s", "save_preview", "Save PNG"),
         ("c", "export_c", "Export C"),
         ("p", "export_pico8", "Export PICO-8"),
+        ("z", "cycle_zoom", "Cycle Zoom"),
+        ("t", "cycle_theme", "Cycle Theme"),
         ("up", "crop_up", "Pan Up"),
         ("down", "crop_down", "Pan Down"),
         ("left", "crop_left", "Pan Left"),
@@ -541,6 +843,12 @@ class PixelArtStudio(App):
         ("2", "tab_viewfinder", "Viewfinder"),
         ("3", "tab_slice", "Cropped Slice"),
     ]
+
+    THEMES = ["arcade", "dos", "amber", "green", "dmg", "cyberpunk"]
+    ZOOM_MODES = ["native", "fit", "2x", "3x", "4x"]
+
+    preview_zoom: reactive[str] = reactive("native")
+    ui_retro_theme: reactive[str] = reactive("arcade")
 
     current_image_path: reactive[Optional[str]] = reactive(None)
     current_source_img: Optional[Image.Image] = None
@@ -556,6 +864,7 @@ class PixelArtStudio(App):
     crop_h: int = 0
     crop_step: int = 10
     _updating_inputs: bool = False
+    _updating_theme: bool = False
     _initialized: bool = False
 
     def __init__(self, initial_image: Optional[str] = None):
@@ -564,7 +873,7 @@ class PixelArtStudio(App):
         self._initialized = False
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        yield RetroHeader(id="retro-marquee")
 
         # Full-screen Warning for Small Terminal
         with Container(id="warning-screen"):
@@ -585,6 +894,18 @@ class PixelArtStudio(App):
         with Horizontal(id="main-container"):
             # Left Control Sidebar
             with VerticalScroll(id="sidebar"):
+                yield Label("🕹️ RETRO UI THEME", classes="section-title")
+                theme_options = [
+                    ("Arcade Neon (Default)", "arcade"),
+                    ("MS-DOS Commander (1990)", "dos"),
+                    ("CRT Amber Phosphor", "amber"),
+                    ("CRT Green Matrix", "green"),
+                    ("Game Boy DMG-01", "dmg"),
+                    ("Cyberpunk Synthwave", "cyberpunk"),
+                ]
+                yield Select(theme_options, value="arcade", id="select-ui-theme", allow_blank=False)
+
+                yield Rule()
                 yield Label("SOURCE IMAGE", classes="section-title")
 
                 # Quick pick dropdown
@@ -797,6 +1118,13 @@ class PixelArtStudio(App):
                 yield Static("No Image Loaded", id="info-bar")
                 with TabbedContent(id="preview-tabs"):
                     with TabPane("👾 Pixel Art", id="tab-pixel"):
+                        with Horizontal(id="zoom-bar"):
+                            yield Label("🔍 ZOOM:", classes="zoom-lbl")
+                            yield Button("1x Native", id="btn-zoom-native", classes="zoom-btn active-zoom")
+                            yield Button("Fit Screen", id="btn-zoom-fit", classes="zoom-btn")
+                            yield Button("2x", id="btn-zoom-2x", classes="zoom-btn")
+                            yield Button("3x", id="btn-zoom-3x", classes="zoom-btn")
+                            yield Button("4x", id="btn-zoom-4x", classes="zoom-btn")
                         yield CanvasWidget(id="canvas-pixel")
                     with TabPane("✂️ Viewfinder (Full)", id="tab-source"):
                         yield Static("📷 Viewfinder: Full Frame", id="viewfinder-hud")
@@ -832,6 +1160,7 @@ class PixelArtStudio(App):
 
     def on_mount(self) -> None:
         """Load initial image upon launch and verify terminal size."""
+        self.apply_theme(self.ui_retro_theme, notify=False)
         self.check_terminal_size(self.size.width, self.size.height)
 
         initial_path = self.initial_image
@@ -850,9 +1179,12 @@ class PixelArtStudio(App):
 
     def set_status(self, message: str, is_error: bool = False) -> None:
         """Update bottom status banner and trigger visual notification toast."""
-        status_bar = self.query_one("#status-bar", Static)
-        prefix = "❌ " if is_error else "✨ "
-        status_bar.update(f"{prefix}{message}")
+        try:
+            status_bar = self.query_one("#status-bar", Static)
+            prefix = "❌ " if is_error else "✨ "
+            status_bar.update(f"{prefix}{message}")
+        except Exception:
+            pass
 
     def load_image(self, file_path_str: str) -> None:
         """Robustly resolve and load an image from user string."""
@@ -1009,7 +1341,12 @@ class PixelArtStudio(App):
             )
 
             # 1. Render converted pixel art cleanly constrained to canvas display
-            rich_pixel = render_image_to_rich_text(sprite, max_w=68, max_h=38)
+            rich_pixel = render_image_to_rich_text(
+                sprite,
+                zoom_mode=self.preview_zoom,
+                max_w=68,
+                max_h=38,
+            )
 
             # 2. Render razor-sharp camera viewfinder
             viewfinder_img = create_viewfinder_image(
@@ -1267,6 +1604,16 @@ class PixelArtStudio(App):
             self.action_export_c()
         elif btn_id == "btn-export-pico8":
             self.action_export_pico8()
+        elif btn_id == "btn-zoom-native":
+            self.set_zoom_mode("native")
+        elif btn_id == "btn-zoom-fit":
+            self.set_zoom_mode("fit")
+        elif btn_id == "btn-zoom-2x":
+            self.set_zoom_mode("2x")
+        elif btn_id == "btn-zoom-3x":
+            self.set_zoom_mode("3x")
+        elif btn_id == "btn-zoom-4x":
+            self.set_zoom_mode("4x")
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if not self._initialized:
@@ -1276,6 +1623,9 @@ class PixelArtStudio(App):
                 val_str = str(event.value)
                 if val_str != str(self.current_image_path):
                     self.load_image(val_str)
+        elif event.select.id == "select-ui-theme":
+            if not self._updating_theme and not event.select.is_blank() and event.value:
+                self.apply_theme(str(event.value))
         elif event.select.id == "select-crop-step":
             if not event.select.is_blank() and event.value:
                 self.crop_step = int(event.value)
@@ -1306,6 +1656,81 @@ class PixelArtStudio(App):
             self.crop_enabled = True
             self.query_one("#switch-crop", Switch).value = True
             self.apply_manual_crop_inputs()
+
+    # Theme and Zoom Management
+    def apply_theme(self, theme_name: str, notify: bool = True) -> None:
+        """Apply one of the vintage retro themes dynamically."""
+        if theme_name not in self.THEMES or self._updating_theme:
+            return
+        self._updating_theme = True
+        try:
+            for t in self.THEMES:
+                self.remove_class(f"theme-{t}")
+            self.add_class(f"theme-{theme_name}")
+            self.ui_retro_theme = theme_name
+
+            try:
+                theme_sel = self.query_one("#select-ui-theme", Select)
+                if theme_sel.value != theme_name:
+                    theme_sel.value = theme_name
+            except Exception:
+                pass
+
+            if notify:
+                msg = f"Theme switched to: {theme_name.upper()}"
+                self.set_status(msg)
+                self.notify(msg, title="Retro Theme", severity="information")
+        finally:
+            self._updating_theme = False
+
+    def action_cycle_theme(self) -> None:
+        """Cycle to next retro theme with 't' key."""
+        curr_idx = self.THEMES.index(self.ui_retro_theme) if self.ui_retro_theme in self.THEMES else 0
+        next_theme = self.THEMES[(curr_idx + 1) % len(self.THEMES)]
+        self.apply_theme(next_theme)
+
+    def set_zoom_mode(self, mode: str) -> None:
+        """Set preview zoom mode ('native', 'fit', '2x', '3x', '4x')."""
+        if mode not in self.ZOOM_MODES:
+            return
+        self.preview_zoom = mode
+
+        # Update button highlights
+        btn_map = {
+            "native": "#btn-zoom-native",
+            "fit": "#btn-zoom-fit",
+            "2x": "#btn-zoom-2x",
+            "3x": "#btn-zoom-3x",
+            "4x": "#btn-zoom-4x",
+        }
+        for z_key, btn_id in btn_map.items():
+            try:
+                b = self.query_one(btn_id, Button)
+                if z_key == mode:
+                    b.add_class("active-zoom")
+                else:
+                    b.remove_class("active-zoom")
+            except Exception:
+                pass
+
+        if self.processed_sprite is not None:
+            rich_pixel = render_image_to_rich_text(
+                self.processed_sprite,
+                zoom_mode=self.preview_zoom,
+                max_w=68,
+                max_h=38,
+            )
+            self.query_one("#canvas-pixel", CanvasWidget).update(rich_pixel)
+
+        msg = f"Preview zoom set to: {mode.upper()}"
+        self.set_status(msg)
+        self.notify(msg, title="Sprite Zoom", severity="information")
+
+    def action_cycle_zoom(self) -> None:
+        """Cycle preview zoom mode with 'z' key."""
+        curr_idx = self.ZOOM_MODES.index(self.preview_zoom) if self.preview_zoom in self.ZOOM_MODES else 0
+        next_zoom = self.ZOOM_MODES[(curr_idx + 1) % len(self.ZOOM_MODES)]
+        self.set_zoom_mode(next_zoom)
 
     # Actions
     def action_browse_files(self) -> None:

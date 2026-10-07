@@ -19,11 +19,23 @@ uv run python main.py --tui
 ```
 
 ### ✨ TUI Features
+- **Vintage Retro UI Themes (6 Themes)**: Authentic arcade marquee header, CRT double-line frames, and 6 selectable themes:
+  - 🕹️ **Arcade Neon** (Default synthwave / neo-geo aesthetic)
+  - 💾 **MS-DOS Commander** (Classic 1990 blue Norton / Turbo Pascal look)
+  - 📺 **CRT Amber Phosphor** (Warm monochrome terminal)
+  - 🟢 **CRT Green Matrix** (Phosphor VT100 / Matrix terminal)
+  - 👾 **Game Boy DMG-01** (Vintage 4-shade pea soup green)
+  - 🌌 **Cyberpunk Synthwave** (Electric violet and hot pink)
+  - *Hotkey:* Press `t` to cycle themes anytime!
+- **100% Pixel-Perfect Sprite Preview (Zero Moiré Distortion)**:
+  - **1x Native (Default)**: Renders the sprite at exact 1:1 pixel resolution in a scrollable canvas. No artificial downscaling, guaranteeing identical visuals to exported PNGs and C headers.
+  - **Integer Zoom Modes**: Easily inspect sprite details with **Fit Screen**, **2x Chunky**, **3x Arcade**, and **4x Giant** zoom buttons.
+  - *Hotkey:* Press `z` to cycle zoom modes instantly!
 - **Live Terminal Canvas & Triple Tabs**: True-color ANSI rendering using Unicode half-blocks (`▀` and `▄`) with 3 tabs:
   - **👾 Pixel Art**: Final retro sprite with palette, dithering, and outline.
   - **✂️ Viewfinder (Full)**: Non-intrusive camera HUD showing full source image with highlighted amber crop frame.
   - **🔍 Cropped Slice**: Exact 1:1 cropped slice at high clarity before conversion.
-- **Instant Hotkeys**: Switch tabs with `1`, `2`, `3` and pan crop box with Arrow Keys (`↑`, `↓`, `←`, `→`).
+- **Instant Hotkeys**: Switch tabs with `1`, `2`, `3`, cycle zoom with `z`, cycle theme with `t`, and pan crop box with Arrow Keys (`↑`, `↓`, `←`, `→`).
 - **Interactive Cropping & Panning D-Pad**: Move and pan the crop window across high-res art using `▲`, `▼`, `◄`, `►` buttons.
 - **Custom Crop Dimensions**: Type your exact wanted Width & Height, or use quick presets (`1:1 Square`, `Center`, `Reset Full`).
 - **Instant Previews**: Adjust resolution, switch retro palettes, toggle outlines, and see results update in real-time.
